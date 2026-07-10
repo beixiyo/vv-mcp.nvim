@@ -1,4 +1,5 @@
 mod config;
+mod diagnostics;
 mod documentation;
 mod locations;
 mod markdown;
@@ -19,6 +20,9 @@ impl OutputConfig {
         }
 
         match operation {
+            "diagnostics" | "workspace_diagnostics" => {
+                diagnostics::format(operation, raw, self.max_results, self.format)
+            }
             "hover" | "signature_help" => {
                 documentation::format(operation, raw, self.max_results, self.format)
             }
@@ -149,6 +153,39 @@ mod tests {
         let output: Value = serde_json::from_str(&output).unwrap();
 
         assert_eq!(output["symbols"]["/code/a.ts"][0]["kind"], "Class");
+        assert_eq!(
+            output["truncated"],
+            serde_json::json!({ "shown": 1, "total": 2 })
+        );
+    }
+
+    #[test]
+    fn groups_deduplicates_and_caps_diagnostics() {
+        let diagnostic = serde_json::json!({
+          "path": "/code/a.ts",
+          "range": { "start": { "line": 2, "character": 3 }, "end": { "line": 2, "character": 8 } },
+          "severity": 1,
+          "message": "Cannot find name 'foo'",
+          "source": "tsgo",
+          "code": 2304,
+        });
+        let raw = serde_json::json!({
+          "diagnostics": [diagnostic, diagnostic, {
+            "path": "/code/b.ts",
+            "range": { "start": { "line": 4, "character": 1 }, "end": { "line": 4, "character": 2 } },
+            "severity": 2,
+            "message": "Unused value"
+          }]
+        });
+        let output = OutputConfig {
+            format: OutputFormat::Json,
+            max_results: 1,
+        }
+        .format_lsp("workspace_diagnostics", raw);
+        let output: Value = serde_json::from_str(&output).unwrap();
+
+        assert_eq!(output["diagnostics"]["/code/a.ts"][0]["severity"], "error");
+        assert_eq!(output["diagnostics"]["/code/a.ts"][0]["code"], "2304");
         assert_eq!(
             output["truncated"],
             serde_json::json!({ "shown": 1, "total": 2 })

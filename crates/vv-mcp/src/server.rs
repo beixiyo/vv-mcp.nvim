@@ -68,7 +68,7 @@ impl VvMcpServer {
     }
 
     #[tool(
-        description = "Run a read-only LSP operation through the matching Neovim instance. Supported operations: definition, declaration, type_definition, implementation, references, hover, signature_help, document_symbols, workspace_symbols. Position-based operations require 1-based line and character. document_symbols only requires uri; workspace_symbols requires uri and query. Paths use standard absolute Unix or Windows syntax. Results are compact JSON or Markdown and capped by max-results."
+        description = "Run a read-only LSP operation through the matching Neovim instance. Supported operations: definition, declaration, type_definition, implementation, references, hover, signature_help, document_symbols, workspace_symbols, diagnostics, workspace_diagnostics. Position-based operations require 1-based line and character. workspace_symbols requires uri and query. Symbol and diagnostic lists are compact and capped by max-results."
     )]
     async fn lsp(&self, Parameters(params): Parameters<LspParams>) -> String {
         match self.run_lsp(&params).await {
@@ -178,6 +178,8 @@ enum LspOperation {
     SignatureHelp,
     DocumentSymbols,
     WorkspaceSymbols,
+    Diagnostics,
+    WorkspaceDiagnostics,
 }
 
 impl LspOperation {
@@ -192,6 +194,8 @@ impl LspOperation {
             Self::SignatureHelp => "signature_help",
             Self::DocumentSymbols => "document_symbols",
             Self::WorkspaceSymbols => "workspace_symbols",
+            Self::Diagnostics => "diagnostics",
+            Self::WorkspaceDiagnostics => "workspace_diagnostics",
         }
     }
 }

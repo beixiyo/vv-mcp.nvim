@@ -1,4 +1,5 @@
 local Context = require('vv-mcp.lsp.context')
+local Diagnostics = require('vv-mcp.lsp.diagnostics')
 local Intelligence = require('vv-mcp.lsp.intelligence')
 local Navigation = require('vv-mcp.lsp.navigation')
 local Operations = require('vv-mcp.lsp.operations')
@@ -26,6 +27,7 @@ function M.request(params)
     navigation = Navigation,
     intelligence = Intelligence,
     symbols = Symbols,
+    diagnostics = Diagnostics,
   }
   return handlers[operation.handler].request(context, operation)
 end

@@ -5,7 +5,7 @@ local M = {}
 ---@field method string
 ---@field requires_position boolean
 ---@field scope 'document'|'workspace'
----@field handler 'navigation'|'intelligence'|'symbols'
+---@field handler 'navigation'|'intelligence'|'symbols'|'diagnostics'
 ---@field requires_query? boolean
 
 ---@type table<string, VVMcpLspOperation>
@@ -73,6 +73,20 @@ local operations = {
     requires_query = true,
     scope = 'workspace',
     handler = 'symbols',
+  },
+  diagnostics = {
+    name = 'diagnostics',
+    method = 'vim.diagnostic.get',
+    requires_position = false,
+    scope = 'document',
+    handler = 'diagnostics',
+  },
+  workspace_diagnostics = {
+    name = 'workspace_diagnostics',
+    method = 'vim.diagnostic.get',
+    requires_position = false,
+    scope = 'workspace',
+    handler = 'diagnostics',
   },
 }
 

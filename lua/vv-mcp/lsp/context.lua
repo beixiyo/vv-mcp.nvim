@@ -52,9 +52,11 @@ function M.create(params, operation)
   else
     bufnr = vim.fn.bufadd(path)
     vim.fn.bufload(bufnr)
-    clients = wait_for_clients(bufnr, timeout_ms)
+    clients = operation.handler == 'diagnostics'
+        and vim.lsp.get_clients({ bufnr = bufnr })
+        or wait_for_clients(bufnr, timeout_ms)
   end
-  if #clients == 0 then
+  if #clients == 0 and operation.handler ~= 'diagnostics' then
     return nil, {
       code = 'no_lsp',
       message = 'No LSP client attached to buffer',
