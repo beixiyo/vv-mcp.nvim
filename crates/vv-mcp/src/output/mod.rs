@@ -4,6 +4,7 @@ mod documentation;
 mod locations;
 mod markdown;
 mod model;
+mod rename;
 mod symbols;
 
 use serde_json::Value;
@@ -20,6 +21,9 @@ impl OutputConfig {
         }
 
         match operation {
+            "prepare_rename" | "rename_preview" | "rename_apply" => {
+                rename::format(operation, raw, self.max_results, self.format)
+            }
             "diagnostics" | "workspace_diagnostics" => {
                 diagnostics::format(operation, raw, self.max_results, self.format)
             }
@@ -190,5 +194,39 @@ mod tests {
             output["truncated"],
             serde_json::json!({ "shown": 1, "total": 2 })
         );
+    }
+
+    #[test]
+    fn caps_rename_preview_without_truncating_edit_totals() {
+        let raw = serde_json::json!({
+          "renameId": "rename-1",
+          "client": "tsgo",
+          "newName": "nextName",
+          "filesChanged": 2,
+          "editsCount": 3,
+          "expiresAt": 123,
+          "changes": {
+            "/code/a.ts": [
+              { "start": { "line": 1, "character": 2 }, "end": { "line": 1, "character": 5 } },
+              { "start": { "line": 4, "character": 2 }, "end": { "line": 4, "character": 5 } }
+            ],
+            "/code/b.ts": [
+              { "start": { "line": 2, "character": 1 }, "end": { "line": 2, "character": 4 } }
+            ]
+          }
+        });
+        let output = OutputConfig {
+            format: OutputFormat::Json,
+            max_results: 1,
+        }
+        .format_lsp("rename_preview", raw);
+        let output: Value = serde_json::from_str(&output).unwrap();
+
+        assert_eq!(output["editsCount"], 3);
+        assert_eq!(
+            output["truncated"],
+            serde_json::json!({ "shown": 1, "total": 3 })
+        );
+        assert_eq!(output["changes"]["/code/a.ts"].as_array().unwrap().len(), 1);
     }
 }

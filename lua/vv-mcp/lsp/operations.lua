@@ -5,8 +5,10 @@ local M = {}
 ---@field method string
 ---@field requires_position boolean
 ---@field scope 'document'|'workspace'
----@field handler 'navigation'|'intelligence'|'symbols'|'diagnostics'
+---@field handler 'navigation'|'intelligence'|'symbols'|'diagnostics'|'rename'
 ---@field requires_query? boolean
+---@field requires_new_name? boolean
+---@field requires_rename_id? boolean
 
 ---@type table<string, VVMcpLspOperation>
 local operations = {
@@ -87,6 +89,29 @@ local operations = {
     requires_position = false,
     scope = 'workspace',
     handler = 'diagnostics',
+  },
+  prepare_rename = {
+    name = 'prepare_rename',
+    method = 'textDocument/prepareRename',
+    requires_position = true,
+    scope = 'document',
+    handler = 'rename',
+  },
+  rename_preview = {
+    name = 'rename_preview',
+    method = 'textDocument/rename',
+    requires_position = true,
+    requires_new_name = true,
+    scope = 'document',
+    handler = 'rename',
+  },
+  rename_apply = {
+    name = 'rename_apply',
+    method = 'workspace/applyEdit',
+    requires_position = false,
+    requires_rename_id = true,
+    scope = 'document',
+    handler = 'rename',
   },
 }
 

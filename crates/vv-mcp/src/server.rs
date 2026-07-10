@@ -68,7 +68,7 @@ impl VvMcpServer {
     }
 
     #[tool(
-        description = "Run a read-only LSP operation through the matching Neovim instance. Supported operations: definition, declaration, type_definition, implementation, references, hover, signature_help, document_symbols, workspace_symbols, diagnostics, workspace_diagnostics. Position-based operations require 1-based line and character. workspace_symbols requires uri and query. Symbol and diagnostic lists are compact and capped by max-results."
+        description = "Run LSP operations through the matching Neovim instance. Read-only operations include navigation, hover, signatures, symbols, and diagnostics. Safe rename uses prepare_rename, rename_preview(newName), then rename_apply(renameId); preview never edits files, while apply writes all edited buffers to disk and rejects stale or expired transactions. Positions are 1-based. List outputs are compact and capped by max-results."
     )]
     async fn lsp(&self, Parameters(params): Parameters<LspParams>) -> String {
         match self.run_lsp(&params).await {
@@ -162,6 +162,10 @@ struct LspParams {
     instance_id: Option<String>,
     /// Search query. Required for workspace_symbols.
     query: Option<String>,
+    /// New symbol name. Required for rename_preview.
+    new_name: Option<String>,
+    /// Transaction ID returned by rename_preview. Required for rename_apply.
+    rename_id: Option<String>,
     /// Neovim-side LSP request timeout in milliseconds.
     timeout_ms: Option<u32>,
 }
@@ -180,6 +184,9 @@ enum LspOperation {
     WorkspaceSymbols,
     Diagnostics,
     WorkspaceDiagnostics,
+    PrepareRename,
+    RenamePreview,
+    RenameApply,
 }
 
 impl LspOperation {
@@ -196,6 +203,9 @@ impl LspOperation {
             Self::WorkspaceSymbols => "workspace_symbols",
             Self::Diagnostics => "diagnostics",
             Self::WorkspaceDiagnostics => "workspace_diagnostics",
+            Self::PrepareRename => "prepare_rename",
+            Self::RenamePreview => "rename_preview",
+            Self::RenameApply => "rename_apply",
         }
     }
 }

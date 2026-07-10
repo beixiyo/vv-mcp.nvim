@@ -3,6 +3,7 @@ local Diagnostics = require('vv-mcp.lsp.diagnostics')
 local Intelligence = require('vv-mcp.lsp.intelligence')
 local Navigation = require('vv-mcp.lsp.navigation')
 local Operations = require('vv-mcp.lsp.operations')
+local Rename = require('vv-mcp.lsp.rename')
 local Symbols = require('vv-mcp.lsp.symbols')
 
 local M = {}
@@ -28,6 +29,7 @@ function M.request(params)
     intelligence = Intelligence,
     symbols = Symbols,
     diagnostics = Diagnostics,
+    rename = Rename,
   }
   return handlers[operation.handler].request(context, operation)
 end
