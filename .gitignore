@@ -1,0 +1,20 @@
+# Rust
+/target/
+*.rs.bk
+
+# Vim / Neovim
+tags
+doc/tags
+*.swp
+*.swo
+*.swn
+session.vim
+.netrwhist
+
+# Lua
+*.luac
+luac.out
+
+# OS
+.DS_Store
+Thumbs.db
