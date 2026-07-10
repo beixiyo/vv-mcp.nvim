@@ -1,7 +1,9 @@
 mod config;
+mod documentation;
 mod locations;
 mod markdown;
 mod model;
+mod symbols;
 
 use serde_json::Value;
 
@@ -16,14 +18,27 @@ impl OutputConfig {
             };
         }
 
-        let flattened = locations::flatten(raw, self.max_results);
-        match self.format {
-            OutputFormat::Json => serde_json::to_string(&flattened).unwrap_or_else(|error| {
-                serde_json::json!({ "error": error.to_string() }).to_string()
-            }),
-            OutputFormat::Markdown => markdown::format_locations(operation, &flattened),
+        match operation {
+            "hover" | "signature_help" => {
+                documentation::format(operation, raw, self.max_results, self.format)
+            }
+            "document_symbols" | "workspace_symbols" => {
+                symbols::format(operation, raw, self.max_results, self.format)
+            }
+            _ => {
+                let flattened = locations::flatten(raw, self.max_results);
+                match self.format {
+                    OutputFormat::Json => to_json(&flattened),
+                    OutputFormat::Markdown => markdown::format_locations(operation, &flattened),
+                }
+            }
         }
     }
+}
+
+fn to_json(value: &impl serde::Serialize) -> String {
+    serde_json::to_string(value)
+        .unwrap_or_else(|error| serde_json::json!({ "error": error.to_string() }).to_string())
 }
 
 #[cfg(test)]
@@ -76,5 +91,67 @@ mod tests {
         assert!(output.contains("Clients: `tsgo`"));
         assert!(output.contains("`/code/a.ts`: 1:2-1:8, 3:4-3:9"));
         assert!(output.contains("Showing 2 of 3 results"));
+    }
+
+    #[test]
+    fn compacts_signature_parameters() {
+        let raw = serde_json::json!({
+          "results": [{
+            "client": "tsgo",
+            "result": {
+              "activeSignature": 0,
+              "activeParameter": 1,
+              "signatures": [{
+                "label": "create(name: string, age: number)",
+                "parameters": [
+                  { "label": "name: string", "documentation": "User name" },
+                  { "label": [21, 32], "documentation": { "kind": "markdown", "value": "User age" } }
+                ]
+              }]
+            }
+          }]
+        });
+        let output = OutputConfig::default().format_lsp("signature_help", raw);
+        let output: Value = serde_json::from_str(&output).unwrap();
+
+        assert_eq!(output["items"][0]["activeParameter"], 2);
+        assert_eq!(output["items"][0]["parameters"][0]["label"], "name: string");
+        assert_eq!(
+            output["items"][0]["parameters"][1]["documentation"],
+            "User age"
+        );
+        assert!(output.get("truncated").is_none());
+    }
+
+    #[test]
+    fn flattens_and_caps_document_symbols() {
+        let raw = serde_json::json!({
+          "path": "/code/a.ts",
+          "results": [{
+            "client": "tsgo",
+            "result": [{
+              "name": "User",
+              "kind": 5,
+              "selectionRange": { "start": { "line": 1, "character": 1 }, "end": { "line": 1, "character": 5 } },
+              "children": [{
+                "name": "login",
+                "kind": 6,
+                "selectionRange": { "start": { "line": 2, "character": 3 }, "end": { "line": 2, "character": 8 } }
+              }]
+            }]
+          }]
+        });
+        let output = OutputConfig {
+            format: OutputFormat::Json,
+            max_results: 1,
+        }
+        .format_lsp("document_symbols", raw);
+        let output: Value = serde_json::from_str(&output).unwrap();
+
+        assert_eq!(output["symbols"]["/code/a.ts"][0]["kind"], "Class");
+        assert_eq!(
+            output["truncated"],
+            serde_json::json!({ "shown": 1, "total": 2 })
+        );
     }
 }

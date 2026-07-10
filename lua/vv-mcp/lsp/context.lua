@@ -5,7 +5,7 @@ local M = {}
 ---@class VVMcpLspContext
 ---@field params table
 ---@field path string
----@field bufnr integer
+---@field bufnr integer?
 ---@field timeout_ms integer
 ---@field clients vim.lsp.Client[]
 
@@ -36,12 +36,24 @@ function M.create(params, operation)
       message = 'line and character must be 1-based positive integers',
     }
   end
+  if operation.requires_query and type(params.query) ~= 'string' then
+    return nil, {
+      code = 'invalid_query',
+      message = 'query is required for ' .. operation.name,
+    }
+  end
 
   local path = Normalize.input_path(params.uri)
-  local bufnr = vim.fn.bufadd(path)
-  vim.fn.bufload(bufnr)
   local timeout_ms = type(params.timeoutMs) == 'number' and params.timeoutMs or 3000
-  local clients = wait_for_clients(bufnr, timeout_ms)
+  local bufnr
+  local clients
+  if operation.scope == 'workspace' then
+    clients = vim.lsp.get_clients()
+  else
+    bufnr = vim.fn.bufadd(path)
+    vim.fn.bufload(bufnr)
+    clients = wait_for_clients(bufnr, timeout_ms)
+  end
   if #clients == 0 then
     return nil, {
       code = 'no_lsp',

@@ -68,7 +68,7 @@ impl VvMcpServer {
     }
 
     #[tool(
-        description = "Run a read-only LSP operation through the matching Neovim instance. Paths use standard absolute Unix or Windows syntax; line and character are 1-based. Results are compact, grouped by file path, formatted as configured JSON or Markdown, and capped by the server max-results setting."
+        description = "Run a read-only LSP operation through the matching Neovim instance. Supported operations: definition, declaration, type_definition, implementation, references, hover, signature_help, document_symbols, workspace_symbols. Position-based operations require 1-based line and character. document_symbols only requires uri; workspace_symbols requires uri and query. Paths use standard absolute Unix or Windows syntax. Results are compact JSON or Markdown and capped by max-results."
     )]
     async fn lsp(&self, Parameters(params): Parameters<LspParams>) -> String {
         match self.run_lsp(&params).await {
@@ -154,13 +154,13 @@ struct LspParams {
     operation: LspOperation,
     /// Absolute Unix or Windows file path. A file URI is accepted for compatibility.
     uri: String,
-    /// 1-based line number.
-    line: u32,
-    /// 1-based character offset.
-    character: u32,
+    /// 1-based line number. Required for position-based operations.
+    line: Option<u32>,
+    /// 1-based character offset. Required for position-based operations.
+    character: Option<u32>,
     /// Exact instance ID from list_instances. Omit to match by path.
     instance_id: Option<String>,
-    /// Reserved for operations such as workspace_symbols.
+    /// Search query. Required for workspace_symbols.
     query: Option<String>,
     /// Neovim-side LSP request timeout in milliseconds.
     timeout_ms: Option<u32>,
@@ -171,8 +171,13 @@ struct LspParams {
 enum LspOperation {
     Definition,
     Declaration,
+    TypeDefinition,
     Implementation,
     References,
+    Hover,
+    SignatureHelp,
+    DocumentSymbols,
+    WorkspaceSymbols,
 }
 
 impl LspOperation {
@@ -180,8 +185,13 @@ impl LspOperation {
         match self {
             Self::Definition => "definition",
             Self::Declaration => "declaration",
+            Self::TypeDefinition => "type_definition",
             Self::Implementation => "implementation",
             Self::References => "references",
+            Self::Hover => "hover",
+            Self::SignatureHelp => "signature_help",
+            Self::DocumentSymbols => "document_symbols",
+            Self::WorkspaceSymbols => "workspace_symbols",
         }
     }
 }

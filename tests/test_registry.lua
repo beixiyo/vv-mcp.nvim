@@ -29,6 +29,11 @@ local invalid = require('vv-mcp.lsp').request({
 })
 assert(invalid.error.code == 'invalid_position', 'LSP positions should be 1-based')
 
+local Operations = require('vv-mcp.lsp.operations')
+assert(Operations.get('workspace_symbols').requires_query, 'workspace symbols should require query')
+assert(not Operations.get('document_symbols').requires_position, 'document symbols should not require position')
+assert(Operations.get('type_definition').handler == 'navigation', 'type definition should use navigation')
+
 Registry.remove({ registry_dir = tmp }, instance.pid)
 require('vv-utils.fs').delete(tmp)
 
