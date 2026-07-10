@@ -13,6 +13,7 @@ use serde_json::Value;
 use crate::{
     instance::{Instance, InstanceList, Registry, resolve_instance},
     nvim::{NvimClient, NvimError},
+    output::OutputConfig,
 };
 
 const LSP_REQUEST: &str = "return require('vv-mcp.lsp').request(...)";
@@ -20,13 +21,15 @@ const LSP_REQUEST: &str = "return require('vv-mcp.lsp').request(...)";
 #[derive(Clone, Debug)]
 pub struct VvMcpServer {
     registry: Registry,
+    output: OutputConfig,
 }
 
 #[tool_router]
 impl VvMcpServer {
-    pub fn new(registry: Option<PathBuf>) -> Result<Self> {
+    pub fn new(registry: Option<PathBuf>, output: OutputConfig) -> Result<Self> {
         Ok(Self {
             registry: Registry::new(registry)?,
+            output,
         })
     }
 
@@ -65,12 +68,20 @@ impl VvMcpServer {
     }
 
     #[tool(
-        description = "Run a read-only LSP operation through the matching Neovim instance. Paths use standard absolute Unix or Windows syntax; line and character are 1-based."
+        description = "Run a read-only LSP operation through the matching Neovim instance. Paths use standard absolute Unix or Windows syntax; line and character are 1-based. Results are compact, grouped by file path, formatted as configured JSON or Markdown, and capped by the server max-results setting."
     )]
     async fn lsp(&self, Parameters(params): Parameters<LspParams>) -> String {
         match self.run_lsp(&params).await {
-            Ok(result) => serde_json::to_string(&result).unwrap_or_else(json_error),
-            Err(error) => json_error(error),
+            Ok(result) => self.output.format_lsp(params.operation.as_str(), result),
+            Err(error) => self.output.format_lsp(
+                params.operation.as_str(),
+                serde_json::json!({
+                  "error": {
+                    "code": "request_failed",
+                    "message": error,
+                  },
+                }),
+            ),
         }
     }
 
@@ -79,6 +90,8 @@ impl VvMcpServer {
         serde_json::json!({
           "status": "ok",
           "registry": self.registry.dir(),
+          "outputFormat": self.output.format,
+          "maxResults": self.output.max_results,
         })
         .to_string()
     }
@@ -162,14 +175,15 @@ enum LspOperation {
     References,
 }
 
-fn json_error(error: impl ToString) -> String {
-    serde_json::json!({
-      "error": {
-        "code": "request_failed",
-        "message": error.to_string(),
-      },
-    })
-    .to_string()
+impl LspOperation {
+    fn as_str(&self) -> &'static str {
+        match self {
+            Self::Definition => "definition",
+            Self::Declaration => "declaration",
+            Self::Implementation => "implementation",
+            Self::References => "references",
+        }
+    }
 }
 
 #[tool_handler]
