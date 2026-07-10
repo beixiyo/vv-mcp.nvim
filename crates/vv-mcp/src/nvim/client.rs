@@ -149,12 +149,15 @@ impl NvimClient {
 impl NvimError {
     pub fn proves_instance_is_stale(&self) -> bool {
         match self {
-            Self::Connect(error) => matches!(
+            Self::Connect(error) | Self::Io(error) => matches!(
                 error.kind(),
                 std::io::ErrorKind::NotFound
                     | std::io::ErrorKind::ConnectionRefused
                     | std::io::ErrorKind::ConnectionReset
+                    | std::io::ErrorKind::BrokenPipe
+                    | std::io::ErrorKind::UnexpectedEof
             ),
+            Self::InvalidResponse(message) => message.starts_with("connection closed"),
             _ => false,
         }
     }
@@ -208,6 +211,18 @@ mod tests {
         encoded.extend(tail);
         assert_eq!(decode_one(&mut encoded).unwrap(), Some(value));
         assert!(encoded.is_empty());
+    }
+
+    #[test]
+    fn recognizes_connection_loss_as_stale_instance() {
+        let broken_pipe = NvimError::Io(std::io::Error::from(std::io::ErrorKind::BrokenPipe));
+        let closed =
+            NvimError::InvalidResponse("connection closed before a response arrived".into());
+        let rpc = NvimError::Rpc("method failed".into());
+
+        assert!(broken_pipe.proves_instance_is_stale());
+        assert!(closed.proves_instance_is_stale());
+        assert!(!rpc.proves_instance_is_stale());
     }
 
     #[cfg(unix)]

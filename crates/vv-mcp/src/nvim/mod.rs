@@ -1,4 +1,4 @@
 mod client;
 mod transport;
 
-pub(crate) use client::NvimClient;
+pub(crate) use client::{NvimClient, NvimError};

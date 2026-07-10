@@ -16,9 +16,20 @@ assert(data.pid == vim.fn.getpid(), 'registry pid should match Neovim')
 assert(data.instanceId:match(':' .. data.pid .. '$'), 'instance id should include pid')
 assert(data.socket ~= '', 'Neovim RPC socket should be published')
 assert(data.cwd == vim.fs.normalize(vim.fn.getcwd()), 'cwd should use normalized wire path')
+local root_is_absolute = data.roots[1]:sub(1, 1) == '/'
+  or data.roots[1]:match('^%a:[/\\]') ~= nil
+assert(root_is_absolute, 'registry roots should use absolute paths')
+assert(not data.projectId:match('^%.%-'), 'project id should use the absolute root basename')
+
+local invalid = require('vv-mcp.lsp').request({
+  operation = 'definition',
+  uri = '/tmp/example.lua',
+  line = 0,
+  character = 1,
+})
+assert(invalid.error.code == 'invalid_position', 'LSP positions should be 1-based')
 
 Registry.remove({ registry_dir = tmp }, instance.pid)
 require('vv-utils.fs').delete(tmp)
 
 print('vv-mcp registry test: ok')
-

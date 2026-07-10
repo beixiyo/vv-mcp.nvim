@@ -59,7 +59,8 @@ end
 ---@return VVMcpInstance
 function M.current()
   local cwd = vim.fs.normalize(vim.fn.getcwd())
-  local root = vim.fs.normalize(Path.get_root() or cwd)
+  local detected_root = Path.get_root() or cwd
+  local root = vim.fs.normalize(vim.fn.fnamemodify(detected_root, ':p'))
   local pid = vim.fn.getpid()
   local project_id = project_name(root) .. '-' .. vim.fn.sha256(root):sub(1, 8)
 
