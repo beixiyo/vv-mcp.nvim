@@ -75,12 +75,39 @@ impl NvimClient {
         let args =
             rmpv::ext::to_value(args).map_err(|error| NvimError::MessagePack(error.to_string()))?;
         let value = self
-            .request("nvim_exec_lua", vec![Value::from(code), args])
+            .request(
+                "nvim_exec_lua",
+                vec![Value::from(code), args],
+                REQUEST_TIMEOUT,
+            )
             .await?;
         rmpv::ext::from_value(value).map_err(|error| NvimError::MessagePack(error.to_string()))
     }
 
-    async fn request(&mut self, method: &str, args: Vec<Value>) -> Result<Value, NvimError> {
+    pub async fn exec_lua_with_timeout<P, R>(
+        &mut self,
+        code: &str,
+        args: P,
+        timeout: Duration,
+    ) -> Result<R, NvimError>
+    where
+        P: Serialize,
+        R: DeserializeOwned,
+    {
+        let args =
+            rmpv::ext::to_value(args).map_err(|error| NvimError::MessagePack(error.to_string()))?;
+        let value = self
+            .request("nvim_exec_lua", vec![Value::from(code), args], timeout)
+            .await?;
+        rmpv::ext::from_value(value).map_err(|error| NvimError::MessagePack(error.to_string()))
+    }
+
+    async fn request(
+        &mut self,
+        method: &str,
+        args: Vec<Value>,
+        timeout: Duration,
+    ) -> Result<Value, NvimError> {
         self.next_message_id += 1;
         let message_id = self.next_message_id;
         let request = Value::Array(vec![
@@ -100,7 +127,7 @@ impl NvimClient {
             .await
             .map_err(|_| NvimError::Timeout)??;
 
-        tokio::time::timeout(REQUEST_TIMEOUT, self.read_response(message_id))
+        tokio::time::timeout(timeout, self.read_response(message_id))
             .await
             .map_err(|_| NvimError::Timeout)?
     }

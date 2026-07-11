@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::{path::PathBuf, time::Duration};
 
 use anyhow::Result;
 use rmcp::{
@@ -17,6 +17,8 @@ use crate::{
 };
 
 const LSP_REQUEST: &str = "return require('vv-mcp.lsp').request(...)";
+const DEFAULT_LSP_TIMEOUT_MS: u32 = 3000;
+const RPC_TIMEOUT_MARGIN_MS: u64 = 1000;
 
 #[derive(Clone, Debug)]
 pub struct VvMcpServer {
@@ -132,10 +134,20 @@ impl VvMcpServer {
         params: &LspParams,
     ) -> Result<Value, NvimError> {
         let mut client = NvimClient::connect(&instance.socket).await?;
+        let rpc_timeout = rpc_timeout(params.timeout_ms);
         let params = serde_json::to_value(params)
             .map_err(|error| NvimError::MessagePack(error.to_string()))?;
-        client.exec_lua(LSP_REQUEST, vec![params]).await
+        client
+            .exec_lua_with_timeout(LSP_REQUEST, vec![params], rpc_timeout)
+            .await
     }
+}
+
+fn rpc_timeout(timeout_ms: Option<u32>) -> Duration {
+    Duration::from_millis(
+        u64::from(timeout_ms.unwrap_or(DEFAULT_LSP_TIMEOUT_MS))
+            .saturating_add(RPC_TIMEOUT_MARGIN_MS),
+    )
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -216,5 +228,16 @@ impl ServerHandler for VvMcpServer {
         ServerInfo::new(ServerCapabilities::builder().enable_tools().build())
             .with_server_info(Implementation::new("vv-mcp", env!("CARGO_PKG_VERSION")))
             .with_instructions("Use list_instances before calling project-scoped LSP tools.")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rpc_timeout_exceeds_inner_lsp_timeout() {
+        assert_eq!(rpc_timeout(None), Duration::from_millis(4000));
+        assert_eq!(rpc_timeout(Some(7500)), Duration::from_millis(8500));
     }
 }

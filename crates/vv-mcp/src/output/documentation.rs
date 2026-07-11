@@ -10,7 +10,7 @@ pub(super) fn format(
     max_results: usize,
     format: OutputFormat,
 ) -> String {
-    let (clients, results) = responses(&raw);
+    let (clients, results) = responses(&raw, operation);
     let mut items = match operation {
         "hover" => flatten_hover(results),
         "signature_help" => flatten_signatures(results),
@@ -41,10 +41,40 @@ pub(super) fn format(
                 for item in items {
                     if let Some(label) = item.get("label").and_then(Value::as_str) {
                         lines.push(format!("- `{label}`"));
+                        if let Some(active_parameter) =
+                            item.get("activeParameter").and_then(Value::as_u64)
+                        {
+                            let active_label = item["parameters"]
+                                .as_array()
+                                .and_then(|parameters| {
+                                    parameters.get(active_parameter as usize - 1)
+                                })
+                                .and_then(|parameter| parameter["label"].as_str())
+                                .unwrap_or("unknown");
+                            lines.push(format!(
+                                "  Active parameter: {active_parameter} (`{active_label}`)"
+                            ));
+                        }
                         if let Some(documentation) =
                             item.get("documentation").and_then(Value::as_str)
                         {
                             lines.push(format!("  {documentation}"));
+                        }
+                        for (index, parameter) in item["parameters"]
+                            .as_array()
+                            .into_iter()
+                            .flatten()
+                            .enumerate()
+                        {
+                            let label = parameter["label"].as_str().unwrap_or("unknown");
+                            let documentation = parameter["documentation"]
+                                .as_str()
+                                .map(|value| format!(": {value}"))
+                                .unwrap_or_default();
+                            lines.push(format!(
+                                "  - Parameter {}: `{label}`{documentation}",
+                                index + 1
+                            ));
                         }
                     } else if let Some(text) = item.as_str() {
                         lines.push(text.to_owned());
@@ -62,15 +92,23 @@ pub(super) fn format(
     }
 }
 
-fn responses(raw: &Value) -> (Vec<String>, Vec<&Value>) {
+fn responses<'a>(raw: &'a Value, operation: &str) -> (Vec<String>, Vec<&'a Value>) {
     let mut clients = BTreeSet::new();
     let mut results = Vec::new();
     for response in raw["results"].as_array().into_iter().flatten() {
-        if let Some(client) = response["client"].as_str() {
-            clients.insert(client.to_owned());
-        }
-        if !response["result"].is_null() {
-            results.push(&response["result"]);
+        let result = &response["result"];
+        let has_content = match operation {
+            "hover" => markup_text(&result["contents"]).is_some(),
+            "signature_help" => result["signatures"]
+                .as_array()
+                .is_some_and(|signatures| !signatures.is_empty()),
+            _ => false,
+        };
+        if has_content {
+            if let Some(client) = response["client"].as_str() {
+                clients.insert(client.to_owned());
+            }
+            results.push(result);
         }
     }
     (clients.into_iter().collect(), results)
@@ -101,8 +139,9 @@ fn flatten_signatures(results: Vec<&Value>) -> Vec<Value> {
             if let Some(documentation) = markup_text(&signature["documentation"]) {
                 item["documentation"] = Value::String(documentation);
             }
+            let signature_active_parameter = signature["activeParameter"].as_u64();
             if index == active_signature
-                && let Some(active_parameter) = active_parameter
+                && let Some(active_parameter) = active_parameter.or(signature_active_parameter)
             {
                 item["activeParameter"] = Value::from(active_parameter + 1);
             }

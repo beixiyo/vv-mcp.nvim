@@ -14,10 +14,13 @@ pub(super) fn format(
     let mut items = Vec::new();
     let default_path = raw["path"].as_str().unwrap_or_default();
     for response in raw["results"].as_array().into_iter().flatten() {
-        if let Some(client) = response["client"].as_str() {
+        let previous_len = items.len();
+        collect_symbols(&response["result"], default_path, None, &mut items);
+        if items.len() > previous_len
+            && let Some(client) = response["client"].as_str()
+        {
             clients.insert(client.to_owned());
         }
-        collect_symbols(&response["result"], default_path, None, &mut items);
     }
 
     let total = items.len();

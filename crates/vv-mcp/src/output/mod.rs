@@ -132,6 +132,40 @@ mod tests {
     }
 
     #[test]
+    fn markdown_signature_keeps_active_parameter_and_parameter_docs() {
+        let raw = serde_json::json!({
+          "results": [
+            { "client": "dprint", "result": null },
+            {
+              "client": "tsgo",
+              "result": {
+                "activeSignature": 0,
+                "signatures": [{
+                  "label": "create(name: string, age: number)",
+                  "activeParameter": 1,
+                  "parameters": [
+                    { "label": "name: string", "documentation": "User name" },
+                    { "label": "age: number", "documentation": "User age" }
+                  ]
+                }]
+              }
+            }
+          ]
+        });
+        let output = OutputConfig {
+            format: OutputFormat::Markdown,
+            max_results: 2,
+        }
+        .format_lsp("signature_help", raw);
+
+        assert!(output.contains("Clients: `tsgo`"));
+        assert!(!output.contains("dprint"));
+        assert!(output.contains("Active parameter: 2 (`age: number`)"));
+        assert!(output.contains("Parameter 1: `name: string`: User name"));
+        assert!(output.contains("Parameter 2: `age: number`: User age"));
+    }
+
+    #[test]
     fn flattens_and_caps_document_symbols() {
         let raw = serde_json::json!({
           "path": "/code/a.ts",

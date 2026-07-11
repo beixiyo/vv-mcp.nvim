@@ -20,13 +20,15 @@ pub(super) fn flatten(raw: Value, max_results: usize) -> FlattenedLocations {
             .get("client")
             .and_then(Value::as_str)
             .unwrap_or("unknown");
-        clients.insert(client.to_owned());
-
         if let Some(error) = response.get("error").and_then(Value::as_str) {
             errors.insert(client.to_owned(), error.to_owned());
         }
 
+        let previous_len = locations.len();
         collect_locations(response.get("result"), &mut locations, &mut seen);
+        if locations.len() > previous_len {
+            clients.insert(client.to_owned());
+        }
     }
 
     let total = locations.len();
