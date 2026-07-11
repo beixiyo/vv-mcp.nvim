@@ -62,6 +62,9 @@ function M.create(params, operation)
   if operation.requires_action_id and (type(params.actionId) ~= 'string' or params.actionId == '') then
     return nil, { code = 'invalid_action_id', message = 'actionId is required for ' .. operation.name }
   end
+  if operation.requires_call_id and (type(params.callId) ~= 'string' or params.callId == '') then
+    return nil, { code = 'invalid_call_id', message = 'callId is required for ' .. operation.name }
+  end
   if operation.name == 'inlay_hints' then
     if params.startLine ~= nil and (type(params.startLine) ~= 'number' or params.startLine < 1) then
       return nil, { code = 'invalid_range', message = 'startLine must be a 1-based positive integer' }

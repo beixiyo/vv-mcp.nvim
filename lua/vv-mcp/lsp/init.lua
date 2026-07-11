@@ -1,5 +1,6 @@
 ---LSP 请求总入口：校验操作、构建请求上下文，并分发到对应的功能模块
 local Context = require('vv-mcp.lsp.context')
+local CallHierarchy = require('vv-mcp.lsp.call_hierarchy')
 local CodeActions = require('vv-mcp.lsp.code_actions')
 local Diagnostics = require('vv-mcp.lsp.diagnostics')
 local DocumentFeatures = require('vv-mcp.lsp.document_features')
@@ -31,6 +32,7 @@ function M.request(params)
 
   local handlers = {
     navigation = Navigation,
+    call_hierarchy = CallHierarchy,
     intelligence = Intelligence,
     document_features = DocumentFeatures,
     highlights = Highlights,

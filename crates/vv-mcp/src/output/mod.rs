@@ -1,5 +1,6 @@
 //! LSP 输出总路由：按操作压缩原始结果，并输出 JSON 或 Markdown
 
+mod call_hierarchy;
 mod code_actions;
 mod config;
 mod diagnostics;
@@ -26,6 +27,9 @@ impl OutputConfig {
         }
 
         match operation {
+            "prepare_call_hierarchy" | "incoming_calls" | "outgoing_calls" => {
+                call_hierarchy::format(operation, raw, self.max_results, self.format)
+            }
             "code_actions"
             | "code_action_preview"
             | "fix_document_preview"
@@ -417,5 +421,45 @@ mod tests {
 
         assert!(output.starts_with("## Fix Document Preview"));
         assert!(output.contains("Showing 2 of 3 edits"));
+    }
+
+    #[test]
+    fn compacts_call_hierarchy_and_keeps_chaining_id() {
+        let raw = serde_json::json!({
+          "client": "tsgo",
+          "sourceCallId": "source-1",
+          "calls": [{
+            "node": {
+              "callId": "next-1",
+              "name": "useTimer",
+              "kind": 12,
+              "uri": "/code/timer.ts",
+              "range": { "start": { "line": 10, "character": 1 }, "end": { "line": 20, "character": 2 } },
+              "selectionRange": { "start": { "line": 10, "character": 5 }, "end": { "line": 10, "character": 13 } },
+              "expiresAt": 123
+            },
+            "fromRanges": [
+              { "start": { "line": 15, "character": 3 }, "end": { "line": 15, "character": 12 } },
+              { "start": { "line": 15, "character": 3 }, "end": { "line": 15, "character": 12 } }
+            ]
+          }]
+        });
+        let output = OutputConfig {
+            format: OutputFormat::Json,
+            max_results: 10,
+        }
+        .format_lsp("incoming_calls", raw);
+        let output: Value = serde_json::from_str(&output).unwrap();
+
+        assert_eq!(output["client"], "tsgo");
+        assert_eq!(output["sourceCallId"], "source-1");
+        assert_eq!(output["items"][0]["callId"], "next-1");
+        assert_eq!(output["items"][0]["kind"], "Function");
+        assert_eq!(output["items"][0]["selectionRange"], "10:5-10:13");
+        assert_eq!(output["items"][0]["fromRanges"][0], "15:3-15:12");
+        assert_eq!(
+            output["items"][0]["fromRanges"].as_array().unwrap().len(),
+            1
+        );
     }
 }

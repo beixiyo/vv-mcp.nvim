@@ -7,11 +7,12 @@ local M = {}
 ---@field method string 对应的 LSP method 或 Neovim 内部诊断方法
 ---@field requires_position boolean 是否要求 1-based 的 line 与 character
 ---@field scope 'document'|'workspace' 请求作用域
----@field handler 'navigation'|'intelligence'|'document_features'|'symbols'|'diagnostics'|'highlights'|'rename'|'code_actions' 处理模块
+---@field handler 'navigation'|'intelligence'|'document_features'|'call_hierarchy'|'symbols'|'diagnostics'|'highlights'|'rename'|'code_actions' 处理模块
 ---@field requires_query? boolean 是否要求符号搜索词
 ---@field requires_new_name? boolean 是否要求新符号名
 ---@field requires_rename_id? boolean 是否要求重命名事务 ID
 ---@field requires_action_id? boolean 是否要求 Code Action 事务 ID
+---@field requires_call_id? boolean 是否要求调用层级节点 ID
 
 ---@type table<string, VVMcpLspOperation>
 local operations = {
@@ -84,6 +85,29 @@ local operations = {
     requires_position = false,
     scope = 'document',
     handler = 'document_features',
+  },
+  prepare_call_hierarchy = {
+    name = 'prepare_call_hierarchy',
+    method = 'textDocument/prepareCallHierarchy',
+    requires_position = true,
+    scope = 'document',
+    handler = 'call_hierarchy',
+  },
+  incoming_calls = {
+    name = 'incoming_calls',
+    method = 'callHierarchy/incomingCalls',
+    requires_position = false,
+    requires_call_id = true,
+    scope = 'document',
+    handler = 'call_hierarchy',
+  },
+  outgoing_calls = {
+    name = 'outgoing_calls',
+    method = 'callHierarchy/outgoingCalls',
+    requires_position = false,
+    requires_call_id = true,
+    scope = 'document',
+    handler = 'call_hierarchy',
   },
   document_symbols = {
     name = 'document_symbols',

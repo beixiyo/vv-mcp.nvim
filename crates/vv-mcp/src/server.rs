@@ -89,6 +89,8 @@ No position required:
 - workspace_diagnostics: diagnostics under a workspace path.
 - document_links: navigable targets in one document.
 - inlay_hints: inferred types and parameter-name hints; optionally accepts startLine and endLine.
+- prepare_call_hierarchy: create call graph nodes at a symbol position and return callId values.
+- incoming_calls, outgoing_calls: query one graph layer by callId; returned nodes include new callId values for further traversal.
 
 Symbol position required:
 - hover: signature and documentation.
@@ -234,6 +236,9 @@ struct LspParams {
     /// `inlay_hints` 的可选结束行，从 1 开始且包含该行；省略时读取整个文件
     #[serde(skip_serializing_if = "Option::is_none")]
     end_line: Option<u32>,
+    /// 调用层级节点 ID；由 prepare 或上一层调用结果返回
+    #[serde(skip_serializing_if = "Option::is_none")]
+    call_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Serialize, schemars::JsonSchema)]
@@ -249,6 +254,9 @@ enum LspOperation {
     SignatureHelp,
     DocumentLinks,
     InlayHints,
+    PrepareCallHierarchy,
+    IncomingCalls,
+    OutgoingCalls,
     DocumentSymbols,
     WorkspaceSymbols,
     Diagnostics,
@@ -275,6 +283,9 @@ impl LspOperation {
             Self::SignatureHelp => "signature_help",
             Self::DocumentLinks => "document_links",
             Self::InlayHints => "inlay_hints",
+            Self::PrepareCallHierarchy => "prepare_call_hierarchy",
+            Self::IncomingCalls => "incoming_calls",
+            Self::OutgoingCalls => "outgoing_calls",
             Self::DocumentSymbols => "document_symbols",
             Self::WorkspaceSymbols => "workspace_symbols",
             Self::Diagnostics => "diagnostics",
@@ -327,6 +338,7 @@ mod tests {
             timeout_ms: None,
             start_line: None,
             end_line: None,
+            call_id: None,
         };
         let value = serde_json::to_value(params).unwrap();
 
