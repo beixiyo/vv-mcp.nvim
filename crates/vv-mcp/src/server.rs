@@ -70,7 +70,7 @@ impl VvMcpServer {
     }
 
     #[tool(
-        description = "Run LSP operations through the matching Neovim instance. Read-only operations include navigation, hover, signatures, symbols, and diagnostics. Safe rename uses prepare_rename, rename_preview(newName), then rename_apply(renameId); preview never edits files, while apply writes all edited buffers to disk and rejects stale or expired transactions. Positions are 1-based. List outputs are compact and capped by max-results."
+        description = "Run LSP operations through the matching Neovim instance. Positions are 1-based. To avoid guessing line and character, first call document_symbols when the file is known, or workspace_symbols with query when searching the project; then reuse the returned range start for definition, declaration, type_definition, implementation, references, hover, and prepare_rename. For signature_help, use a position inside the intended call argument rather than a symbol definition position. Safe rename uses prepare_rename, rename_preview(newName), then rename_apply(renameId); preview never edits files, while apply writes all edited buffers to disk and rejects stale or expired transactions. List outputs are compact and capped by max-results."
     )]
     async fn lsp(&self, Parameters(params): Parameters<LspParams>) -> String {
         match self.run_lsp(&params).await {
@@ -166,9 +166,9 @@ struct LspParams {
     operation: LspOperation,
     /// Absolute Unix or Windows file path. A file URI is accepted for compatibility.
     uri: String,
-    /// 1-based line number. Required for position-based operations.
+    /// 1-based line number. Required for position-based operations. Prefer the range start returned by document_symbols or workspace_symbols instead of counting manually.
     line: Option<u32>,
-    /// 1-based character offset. Required for position-based operations.
+    /// 1-based character offset. Required for position-based operations. Prefer the range start returned by symbol operations; signature_help needs a position inside the intended argument.
     character: Option<u32>,
     /// Exact instance ID from list_instances. Omit to match by path.
     instance_id: Option<String>,
@@ -227,7 +227,9 @@ impl ServerHandler for VvMcpServer {
     fn get_info(&self) -> ServerInfo {
         ServerInfo::new(ServerCapabilities::builder().enable_tools().build())
             .with_server_info(Implementation::new("vv-mcp", env!("CARGO_PKG_VERSION")))
-            .with_instructions("Use list_instances before calling project-scoped LSP tools.")
+            .with_instructions(
+                "Use list_instances first. When line or character is uncertain, locate the symbol with document_symbols for a known file or workspace_symbols for a project query, then reuse its 1-based range start in position-based operations. signature_help instead needs a position inside the intended call argument.",
+            )
     }
 }
 
