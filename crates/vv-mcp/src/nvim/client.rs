@@ -1,3 +1,5 @@
+//! 最小 Neovim Msgpack-RPC 客户端，负责请求配对、超时和响应大小保护
+
 use std::{io::Cursor, time::Duration};
 
 use rmpv::Value;

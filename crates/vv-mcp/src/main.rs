@@ -1,3 +1,5 @@
+//! vv-mcp 命令行入口：读取运行配置并通过 stdio 启动 MCP Server
+
 mod instance;
 mod nvim;
 mod output;
@@ -13,19 +15,19 @@ use server::VvMcpServer;
 #[derive(Debug, Parser)]
 #[command(name = "vv-mcp", version, about)]
 struct Args {
-    /// Directory containing Neovim instance registry files.
+    /// Neovim 实例注册文件所在目录
     #[arg(long, env = "VV_MCP_REGISTRY")]
     registry: Option<PathBuf>,
 
-    /// Print discovered instances as JSON and exit.
+    /// 以 JSON 输出已发现实例并退出
     #[arg(long)]
     list_instances: bool,
 
-    /// LSP result format returned to MCP clients.
+    /// 返回给 MCP 客户端的 LSP 结果格式
     #[arg(long, env = "VV_MCP_OUTPUT_FORMAT", value_enum, default_value = "json")]
     output_format: OutputFormat,
 
-    /// Maximum number of LSP result items returned per request.
+    /// 单次请求最多返回的 LSP 结果数量
     #[arg(
         long,
         env = "VV_MCP_MAX_RESULTS",

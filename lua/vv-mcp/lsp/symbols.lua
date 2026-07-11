@@ -1,10 +1,12 @@
+---处理文档符号大纲与工作区符号搜索
 local Normalize = require('vv-mcp.lsp.normalize')
 
 local M = {}
 
----@param context VVMcpLspContext
----@param operation VVMcpLspOperation
----@return table
+---请求符号并保留每个实际响应的 LSP 客户端来源
+---@param context VVMcpLspContext 请求上下文
+---@param operation VVMcpLspOperation 操作定义
+---@return table result
 function M.request(context, operation)
   local results = {}
   for _, client in ipairs(context.clients) do

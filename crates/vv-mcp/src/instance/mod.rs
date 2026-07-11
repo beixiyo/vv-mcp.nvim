@@ -1,3 +1,5 @@
+//! Neovim 实例注册、存活探测与工作区路由
+
 mod model;
 mod registry;
 mod resolver;

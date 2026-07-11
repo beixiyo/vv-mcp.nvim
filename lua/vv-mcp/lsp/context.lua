@@ -1,18 +1,21 @@
+---负责校验 MCP 入参、加载目标 buffer，并发现能够响应请求的 LSP 客户端
 local Normalize = require('vv-mcp.lsp.normalize')
 
 local M = {}
 
+---一次 LSP 操作共享的运行上下文
 ---@class VVMcpLspContext
----@field params table
----@field path string
----@field bufnr integer?
----@field timeout_ms integer
----@field clients vim.lsp.Client[]
+---@field params table 原始 MCP 入参
+---@field path string 已规范化的本地路径
+---@field bufnr integer? 文档级操作对应的 buffer，工作区操作为空
+---@field timeout_ms integer 单个 LSP 同步请求的超时时间
+---@field clients vim.lsp.Client[] 当前作用域内可用的客户端
 
----@param bufnr integer
----@param timeout_ms integer
----@param method string
----@return vim.lsp.Client[]
+---等待目标 buffer attach 至少一个支持指定方法的客户端
+---@param bufnr integer buffer ID
+---@param timeout_ms integer 最长等待时间
+---@param method string LSP method
+---@return vim.lsp.Client[] clients 返回当前 attach 的全部客户端，由处理器继续筛选能力
 local function wait_for_clients(bufnr, timeout_ms, method)
   local clients = vim.lsp.get_clients({ bufnr = bufnr })
   local function has_supporting_client()
@@ -30,9 +33,11 @@ local function wait_for_clients(bufnr, timeout_ms, method)
   return clients
 end
 
----@param params table
----@param operation VVMcpLspOperation
----@return VVMcpLspContext?, table?
+---校验操作参数并创建统一请求上下文
+---@param params table MCP 入参
+---@param operation VVMcpLspOperation 操作定义
+---@return VVMcpLspContext? context
+---@return table? error
 function M.create(params, operation)
   if operation.requires_position
       and (type(params.line) ~= 'number' or params.line < 1

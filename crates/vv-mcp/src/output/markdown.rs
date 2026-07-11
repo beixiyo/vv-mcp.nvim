@@ -1,3 +1,5 @@
+//! 通用位置结果与错误对象的 Markdown 渲染
+
 use serde_json::Value;
 
 use super::model::FlattenedLocations;

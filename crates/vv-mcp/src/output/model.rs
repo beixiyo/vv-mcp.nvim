@@ -1,3 +1,5 @@
+//! 多种输出格式共享的紧凑数据模型
+
 use std::collections::BTreeMap;
 
 use serde::Serialize;

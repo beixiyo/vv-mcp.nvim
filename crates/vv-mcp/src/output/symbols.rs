@@ -1,3 +1,5 @@
+//! 文档与工作区符号的扁平化、分组和截断输出
+
 use std::collections::{BTreeMap, BTreeSet};
 
 use serde_json::{Value, json};

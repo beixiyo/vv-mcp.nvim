@@ -1,3 +1,5 @@
+//! 将定义、引用等 Location 结果去重、分组并截断
+
 use std::collections::{BTreeMap, BTreeSet};
 
 use serde_json::Value;

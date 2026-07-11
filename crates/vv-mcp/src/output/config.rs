@@ -1,3 +1,5 @@
+//! 输出格式与最大结果数量配置
+
 use clap::ValueEnum;
 use serde::Serialize;
 

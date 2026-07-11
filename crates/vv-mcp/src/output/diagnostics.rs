@@ -1,3 +1,5 @@
+//! 诊断结果的去重、按文件分组、截断与严重级别转换
+
 use std::collections::{BTreeMap, BTreeSet};
 
 use serde::Serialize;

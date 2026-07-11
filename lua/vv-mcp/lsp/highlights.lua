@@ -1,10 +1,12 @@
+---查询当前文档内同一语义符号的读、写与文本高亮范围
 local Normalize = require('vv-mcp.lsp.normalize')
 
 local M = {}
 
----@param context VVMcpLspContext
----@param operation VVMcpLspOperation
----@return table
+---向支持 documentHighlight 的客户端请求语义出现位置
+---@param context VVMcpLspContext 请求上下文
+---@param operation VVMcpLspOperation 操作定义
+---@return table result
 function M.request(context, operation)
   local results = {}
   local params = {

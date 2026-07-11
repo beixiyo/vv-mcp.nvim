@@ -1,3 +1,5 @@
+//! 重命名预检、预览与应用结果的紧凑输出
+
 use std::collections::BTreeMap;
 
 use serde_json::{Value, json};

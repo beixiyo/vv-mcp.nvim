@@ -1,8 +1,10 @@
+---管理 Code Action 的查询、无副作用预览和单次安全应用事务
 local Normalize = require('vv-mcp.lsp.normalize')
 local WorkspaceEdit = require('vv-mcp.lsp.workspace_edit')
 
 local M = {}
 local transactions = {}
+---预览事务只保存在当前 Neovim 进程中，超时或应用后立即失效
 local ttl_seconds = 300
 
 local function action_id(seed)
@@ -297,6 +299,10 @@ local function apply(context)
   }
 end
 
+---执行 Code Action 操作并维护 preview -> apply 的事务约束
+---@param context VVMcpLspContext 请求上下文
+---@param operation VVMcpLspOperation 操作定义
+---@return table result
 function M.request(context, operation)
   if operation.name == 'code_actions' then return list_actions(context, operation) end
   if operation.name == 'code_action_preview' then return preview(context) end

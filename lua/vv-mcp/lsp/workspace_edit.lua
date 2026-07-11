@@ -1,3 +1,7 @@
+---将多个 LSP WorkspaceEdit 规范化、去重并作为一个安全事务应用
+---
+---所有客户端坐标先转换为 UTF-8 字节坐标，再合并为一次编辑，避免多 LSP
+---依次应用时产生坐标漂移。应用前后都会检查 buffer 与磁盘状态，失败则回滚
 local Normalize = require('vv-mcp.lsp.normalize')
 
 local M = {}
@@ -161,8 +165,10 @@ local function save_targets(transaction)
   return true
 end
 
----@param edits { edit: table, encoding: string }[]
----@return table?, table?
+---准备无副作用的 WorkspaceEdit 事务
+---@param edits { edit: table, encoding: string }[] 各客户端返回的编辑及其坐标编码
+---@return table? transaction 已规范化、可安全应用的事务
+---@return table? error
 function M.prepare(edits)
   local states = {}
   local changes = {}
@@ -235,8 +241,10 @@ function M.prepare(edits)
   }
 end
 
----@param transaction table
----@return boolean, table?
+---原子应用事务并写入所有目标文件，任何阶段失败都会尝试回滚
+---@param transaction table M.prepare 返回的事务
+---@return boolean ok
+---@return table? error
 function M.apply(transaction)
   for _, state in pairs(transaction.states) do
     if not state_matches(state) then

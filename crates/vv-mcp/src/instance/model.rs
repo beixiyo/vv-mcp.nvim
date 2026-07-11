@@ -1,6 +1,8 @@
+//! 实例注册文件与 MCP 实例列表的数据模型
+
 use serde::{Deserialize, Serialize};
 
-/// Metadata published by one running Neovim instance.
+/// 单个运行中 Neovim 实例发布的元数据
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Instance {
@@ -14,7 +16,7 @@ pub struct Instance {
     pub updated_at: u64,
 }
 
-/// Result returned by the `list_instances` MCP tool.
+/// `list_instances` MCP 工具返回的实例集合
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct InstanceList {

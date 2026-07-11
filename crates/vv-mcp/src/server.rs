@@ -1,3 +1,5 @@
+//! MCP Server 定义：注册工具、生成输入 Schema，并将 LSP 请求转发给匹配的 Neovim 实例
+
 use std::{path::PathBuf, time::Duration};
 
 use anyhow::Result;
@@ -21,6 +23,7 @@ const DEFAULT_LSP_TIMEOUT_MS: u32 = 3000;
 const RPC_TIMEOUT_MARGIN_MS: u64 = 1000;
 
 #[derive(Clone, Debug)]
+/// vv-mcp 服务实例，持有实例注册表与输出压缩配置
 pub struct VvMcpServer {
     registry: Registry,
     output: OutputConfig,
@@ -183,36 +186,36 @@ fn rpc_timeout(timeout_ms: Option<u32>) -> Duration {
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
 struct ResolveInstanceParams {
-    /// Exact instance ID returned by list_instances.
+    /// `list_instances` 返回的精确实例 ID
     instance_id: Option<String>,
-    /// Absolute Unix or Windows file path used for automatic workspace matching.
+    /// 用于自动匹配工作区的 Unix 或 Windows 绝对路径
     uri: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Serialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
 struct LspParams {
-    /// LSP operation to execute. Some apply operations write edits to disk; follow the safe write flows in the tool description.
+    /// 要执行的 LSP 操作；部分 apply 操作会写入磁盘，必须遵循工具描述中的安全写入流程
     operation: LspOperation,
-    /// Native absolute Unix or Windows path, such as /home/user/file.ts or C:/work/file.ts. Plain paths are recommended; a file URI is accepted for compatibility.
+    /// 原生 Unix 或 Windows 绝对路径；推荐普通路径，同时兼容 file URI
     uri: String,
-    /// 1-based line. Required only for position-based operations. Reuse the range start returned by document_symbols or workspace_symbols instead of counting manually.
+    /// 从 1 开始的行号；仅位置操作需要，优先复用符号查询返回的 range 起点
     line: Option<u32>,
-    /// 1-based character. Required only for position-based operations. Reuse a symbol range start; signature_help instead needs a position inside the intended call argument.
+    /// 从 1 开始的列号；`signature_help` 必须传入目标调用参数内部的位置
     character: Option<u32>,
-    /// Exact instance ID from list_instances. Usually omit it to route automatically by uri; provide it to disambiguate overlapping instances.
+    /// `list_instances` 返回的实例 ID；通常省略并按 uri 自动路由，实例重叠时用于消歧
     instance_id: Option<String>,
-    /// Non-empty symbol search query. Required only for workspace_symbols.
+    /// 非空符号搜索词，仅 `workspace_symbols` 需要
     query: Option<String>,
-    /// New symbol name. Required only for rename_preview.
+    /// 新符号名，仅 `rename_preview` 需要
     new_name: Option<String>,
-    /// Transaction ID returned by rename_preview. Required only for rename_apply.
+    /// `rename_preview` 返回的事务 ID，仅 `rename_apply` 需要
     rename_id: Option<String>,
-    /// Code action ID. A candidate from code_actions must be passed to code_action_preview before apply; file_quickfix_preview returns an already previewed transaction ID.
+    /// Code Action ID；候选动作必须先预览，全文件 Quick Fix 返回的 ID 已完成预览
     action_id: Option<String>,
-    /// Optional code action kind filter for code_actions, such as quickfix or refactor.extract.
+    /// `code_actions` 的可选 kind 过滤器，例如 `quickfix` 或 `refactor.extract`
     action_kind: Option<String>,
-    /// Optional Neovim-side LSP request timeout in milliseconds for unusually slow language servers.
+    /// Neovim 侧可选超时时间，用于响应较慢的语言服务器
     timeout_ms: Option<u32>,
 }
 

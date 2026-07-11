@@ -1,3 +1,5 @@
+//! 根据 instanceId 或最长工作区路径前缀选择唯一 Neovim 实例
+
 use typed_path::{Utf8UnixPath, Utf8WindowsPath};
 
 use super::Instance;

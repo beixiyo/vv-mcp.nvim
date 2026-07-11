@@ -1,3 +1,5 @@
+//! 统一 TCP、Unix Socket 与 Windows Named Pipe 的异步连接接口
+
 use std::{io, pin::Pin};
 
 use tokio::io::{AsyncRead, AsyncWrite};

@@ -1,3 +1,5 @@
+//! 文档语义高亮范围与读写类型的紧凑输出
+
 use std::collections::BTreeSet;
 
 use serde_json::{Value, json};

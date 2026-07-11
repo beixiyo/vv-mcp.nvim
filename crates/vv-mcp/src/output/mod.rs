@@ -1,3 +1,5 @@
+//! LSP 输出总路由：按操作压缩原始结果，并输出 JSON 或 Markdown
+
 mod code_actions;
 mod config;
 mod diagnostics;

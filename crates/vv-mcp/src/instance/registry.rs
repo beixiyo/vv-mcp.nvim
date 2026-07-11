@@ -1,3 +1,5 @@
+//! 从状态目录读取实例，并通过真实 RPC 探测清理失效注册文件
+
 use std::{
     fs,
     path::{Path, PathBuf},

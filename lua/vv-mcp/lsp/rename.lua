@@ -1,7 +1,12 @@
+---管理跨文件重命名的能力预检、无副作用预览与单次安全应用事务
+---
+---预览时保存目标 buffer 与磁盘快照；应用前检查内容是否过期，应用或保存失败时
+---回滚所有已变更目标，避免跨文件重命名只完成一部分
 local Normalize = require('vv-mcp.lsp.normalize')
 
 local M = {}
 local transactions = {}
+---重命名预览只在当前 Neovim 进程内保留五分钟
 local ttl_seconds = 300
 
 local function read_file(path)
@@ -306,6 +311,10 @@ local function apply(context)
   }
 end
 
+---执行重命名流程中的 prepare、preview 或 apply 阶段
+---@param context VVMcpLspContext 请求上下文
+---@param operation VVMcpLspOperation 操作定义
+---@return table result
 function M.request(context, operation)
   if operation.name == 'prepare_rename' then return prepare(context, operation) end
   if operation.name == 'rename_preview' then return preview(context, operation) end

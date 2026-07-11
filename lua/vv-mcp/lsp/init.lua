@@ -1,3 +1,4 @@
+---LSP 请求总入口：校验操作、构建请求上下文，并分发到对应的功能模块
 local Context = require('vv-mcp.lsp.context')
 local CodeActions = require('vv-mcp.lsp.code_actions')
 local Diagnostics = require('vv-mcp.lsp.diagnostics')
@@ -10,8 +11,9 @@ local Symbols = require('vv-mcp.lsp.symbols')
 
 local M = {}
 
----@param params table
----@return table
+---执行一次由 MCP 转发而来的 LSP 操作
+---@param params table MCP 入参，字段要求由具体操作定义
+---@return table result 紧凑化之前的统一结果或错误对象
 function M.request(params)
   local operation = Operations.get(params.operation)
   if not operation then

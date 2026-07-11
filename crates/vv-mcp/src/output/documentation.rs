@@ -1,3 +1,5 @@
+//! Hover 与 Signature Help 文档的紧凑输出
+
 use std::collections::BTreeSet;
 
 use serde_json::{Value, json};

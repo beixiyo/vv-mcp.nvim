@@ -1,3 +1,4 @@
+---读取 Neovim 已发布的实时诊断，并按文件或工作区范围过滤
 local Normalize = require('vv-mcp.lsp.normalize')
 
 local M = {}
@@ -26,9 +27,10 @@ local function compact(diagnostic)
   }
 end
 
----@param context VVMcpLspContext
----@param operation VVMcpLspOperation
----@return table
+---返回当前 Neovim 实例已经持有的诊断，不额外触发 LSP 请求
+---@param context VVMcpLspContext 请求上下文
+---@param operation VVMcpLspOperation 操作定义
+---@return table result
 function M.request(context, operation)
   local diagnostics = vim.diagnostic.get(
     operation.scope == 'document' and context.bufnr or nil
