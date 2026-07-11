@@ -1,6 +1,8 @@
+mod code_actions;
 mod config;
 mod diagnostics;
 mod documentation;
+mod highlights;
 mod locations;
 mod markdown;
 mod model;
@@ -21,6 +23,13 @@ impl OutputConfig {
         }
 
         match operation {
+            "code_actions"
+            | "code_action_preview"
+            | "file_quickfix_preview"
+            | "code_action_apply" => {
+                code_actions::format(operation, raw, self.max_results, self.format)
+            }
+            "document_highlight" => highlights::format(raw, self.max_results, self.format),
             "prepare_rename" | "rename_preview" | "rename_apply" => {
                 rename::format(operation, raw, self.max_results, self.format)
             }
@@ -262,5 +271,63 @@ mod tests {
             serde_json::json!({ "shown": 1, "total": 3 })
         );
         assert_eq!(output["changes"]["/code/a.ts"].as_array().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn formats_and_caps_document_highlights() {
+        let raw = serde_json::json!({
+          "path": "/code/a.ts",
+          "results": [{
+            "client": "tsgo",
+            "result": [
+              { "range": { "start": { "line": 2, "character": 3 }, "end": { "line": 2, "character": 6 } }, "kind": 3 },
+              { "range": { "start": { "line": 4, "character": 1 }, "end": { "line": 4, "character": 4 } }, "kind": 2 }
+            ]
+          }]
+        });
+        let output = OutputConfig {
+            format: OutputFormat::Json,
+            max_results: 1,
+        }
+        .format_lsp("document_highlight", raw);
+        let output: Value = serde_json::from_str(&output).unwrap();
+
+        assert_eq!(output["clients"], serde_json::json!(["tsgo"]));
+        assert_eq!(output["highlights"][0]["kind"], "write");
+        assert_eq!(output["highlights"][0]["range"], "2:3-2:6");
+        assert_eq!(
+            output["truncated"],
+            serde_json::json!({ "shown": 1, "total": 2 })
+        );
+    }
+
+    #[test]
+    fn caps_code_action_preview_without_losing_edit_totals() {
+        let raw = serde_json::json!({
+          "actionId": "action-1",
+          "title": "Fix issue",
+          "filesChanged": 1,
+          "editsCount": 2,
+          "expiresAt": 123,
+          "changes": {
+            "/code/a.ts": [
+              { "start": { "line": 1, "character": 1 }, "end": { "line": 1, "character": 3 } },
+              { "start": { "line": 3, "character": 1 }, "end": { "line": 3, "character": 3 } }
+            ]
+          }
+        });
+        let output = OutputConfig {
+            format: OutputFormat::Json,
+            max_results: 1,
+        }
+        .format_lsp("code_action_preview", raw);
+        let output: Value = serde_json::from_str(&output).unwrap();
+
+        assert_eq!(output["editsCount"], 2);
+        assert_eq!(output["changes"]["/code/a.ts"].as_array().unwrap().len(), 1);
+        assert_eq!(
+            output["truncated"],
+            serde_json::json!({ "shown": 1, "total": 2 })
+        );
     }
 }

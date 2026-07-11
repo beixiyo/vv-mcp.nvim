@@ -70,7 +70,7 @@ impl VvMcpServer {
     }
 
     #[tool(
-        description = "Run LSP operations through the matching Neovim instance. Positions are 1-based. To avoid guessing line and character, first call document_symbols when the file is known, or workspace_symbols with query when searching the project; then reuse the returned range start for definition, declaration, type_definition, implementation, references, hover, and prepare_rename. For signature_help, use a position inside the intended call argument rather than a symbol definition position. Safe rename uses prepare_rename, rename_preview(newName), then rename_apply(renameId); preview never edits files, while apply writes all edited buffers to disk and rejects stale or expired transactions. List outputs are compact and capped by max-results."
+        description = "Run LSP operations through the matching Neovim instance. Positions are 1-based. To avoid guessing line and character, first call document_symbols when the file is known, or workspace_symbols with query when searching the project; then reuse the returned range start for navigation, references, hover, document_highlight, prepare_rename, and code_actions. For signature_help, use a position inside the intended call argument. Safe rename uses prepare_rename, rename_preview(newName), then rename_apply(renameId). Safe code actions use code_actions, code_action_preview(actionId), then code_action_apply(actionId). file_quickfix_preview collects all editable quickfix actions for a document before the same apply step. Preview operations never edit files; apply writes edited buffers to disk and rejects stale or expired transactions. Command-only code actions are not executed. List outputs are compact and capped by max-results."
     )]
     async fn lsp(&self, Parameters(params): Parameters<LspParams>) -> String {
         match self.run_lsp(&params).await {
@@ -178,6 +178,10 @@ struct LspParams {
     new_name: Option<String>,
     /// Transaction ID returned by rename_preview. Required for rename_apply.
     rename_id: Option<String>,
+    /// Code action transaction ID. Returned by code_actions or file_quickfix_preview; required for code_action_preview and code_action_apply.
+    action_id: Option<String>,
+    /// Optional code action kind filter, such as quickfix or refactor.extract.
+    action_kind: Option<String>,
     /// Neovim-side LSP request timeout in milliseconds.
     timeout_ms: Option<u32>,
 }
@@ -190,12 +194,17 @@ enum LspOperation {
     TypeDefinition,
     Implementation,
     References,
+    DocumentHighlight,
     Hover,
     SignatureHelp,
     DocumentSymbols,
     WorkspaceSymbols,
     Diagnostics,
     WorkspaceDiagnostics,
+    CodeActions,
+    CodeActionPreview,
+    FileQuickfixPreview,
+    CodeActionApply,
     PrepareRename,
     RenamePreview,
     RenameApply,
@@ -209,12 +218,17 @@ impl LspOperation {
             Self::TypeDefinition => "type_definition",
             Self::Implementation => "implementation",
             Self::References => "references",
+            Self::DocumentHighlight => "document_highlight",
             Self::Hover => "hover",
             Self::SignatureHelp => "signature_help",
             Self::DocumentSymbols => "document_symbols",
             Self::WorkspaceSymbols => "workspace_symbols",
             Self::Diagnostics => "diagnostics",
             Self::WorkspaceDiagnostics => "workspace_diagnostics",
+            Self::CodeActions => "code_actions",
+            Self::CodeActionPreview => "code_action_preview",
+            Self::FileQuickfixPreview => "file_quickfix_preview",
+            Self::CodeActionApply => "code_action_apply",
             Self::PrepareRename => "prepare_rename",
             Self::RenamePreview => "rename_preview",
             Self::RenameApply => "rename_apply",

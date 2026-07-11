@@ -54,6 +54,9 @@ function M.create(params, operation)
   if operation.requires_rename_id and (type(params.renameId) ~= 'string' or params.renameId == '') then
     return nil, { code = 'invalid_rename_id', message = 'renameId is required for ' .. operation.name }
   end
+  if operation.requires_action_id and (type(params.actionId) ~= 'string' or params.actionId == '') then
+    return nil, { code = 'invalid_action_id', message = 'actionId is required for ' .. operation.name }
+  end
 
   local path = Normalize.input_path(params.uri)
   local timeout_ms = type(params.timeoutMs) == 'number' and params.timeoutMs or 3000

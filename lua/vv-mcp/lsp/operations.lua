@@ -5,10 +5,11 @@ local M = {}
 ---@field method string
 ---@field requires_position boolean
 ---@field scope 'document'|'workspace'
----@field handler 'navigation'|'intelligence'|'symbols'|'diagnostics'|'rename'
+---@field handler 'navigation'|'intelligence'|'symbols'|'diagnostics'|'highlights'|'rename'|'code_actions'
 ---@field requires_query? boolean
 ---@field requires_new_name? boolean
 ---@field requires_rename_id? boolean
+---@field requires_action_id? boolean
 
 ---@type table<string, VVMcpLspOperation>
 local operations = {
@@ -46,6 +47,13 @@ local operations = {
     requires_position = true,
     scope = 'document',
     handler = 'navigation',
+  },
+  document_highlight = {
+    name = 'document_highlight',
+    method = 'textDocument/documentHighlight',
+    requires_position = true,
+    scope = 'document',
+    handler = 'highlights',
   },
   hover = {
     name = 'hover',
@@ -89,6 +97,36 @@ local operations = {
     requires_position = false,
     scope = 'workspace',
     handler = 'diagnostics',
+  },
+  code_actions = {
+    name = 'code_actions',
+    method = 'textDocument/codeAction',
+    requires_position = true,
+    scope = 'document',
+    handler = 'code_actions',
+  },
+  code_action_preview = {
+    name = 'code_action_preview',
+    method = 'textDocument/codeAction',
+    requires_position = false,
+    requires_action_id = true,
+    scope = 'document',
+    handler = 'code_actions',
+  },
+  file_quickfix_preview = {
+    name = 'file_quickfix_preview',
+    method = 'textDocument/codeAction',
+    requires_position = false,
+    scope = 'document',
+    handler = 'code_actions',
+  },
+  code_action_apply = {
+    name = 'code_action_apply',
+    method = 'textDocument/codeAction',
+    requires_position = false,
+    requires_action_id = true,
+    scope = 'document',
+    handler = 'code_actions',
   },
   prepare_rename = {
     name = 'prepare_rename',
