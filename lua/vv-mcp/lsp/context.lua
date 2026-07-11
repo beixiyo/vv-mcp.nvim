@@ -3,6 +3,18 @@ local Normalize = require('vv-mcp.lsp.normalize')
 
 local M = {}
 
+local function loaded_buffer(path)
+  local target = vim.fn.resolve(vim.fs.normalize(path))
+  for _, bufnr in ipairs(vim.api.nvim_list_bufs()) do
+    local name = vim.api.nvim_buf_get_name(bufnr)
+    if vim.api.nvim_buf_is_loaded(bufnr)
+        and name ~= ''
+        and vim.fn.resolve(vim.fs.normalize(name)) == target then
+      return bufnr
+    end
+  end
+end
+
 ---一次 LSP 操作共享的运行上下文
 ---@class VVMcpLspContext
 ---@field params table 原始 MCP 入参
@@ -47,7 +59,7 @@ function M.create(params, operation)
       message = 'line and character must be 1-based positive integers',
     }
   end
-  if operation.requires_query and type(params.query) ~= 'string' then
+  if operation.requires_query and (type(params.query) ~= 'string' or params.query == '') then
     return nil, {
       code = 'invalid_query',
       message = 'query is required for ' .. operation.name,
@@ -84,8 +96,18 @@ function M.create(params, operation)
   if operation.scope == 'workspace' then
     clients = vim.lsp.get_clients()
   else
-    bufnr = vim.fn.bufadd(path)
-    vim.fn.bufload(bufnr)
+    bufnr = loaded_buffer(path)
+    if not bufnr then
+      if not vim.uv.fs_lstat(path) then
+        return nil, {
+          code = 'document_not_found',
+          message = 'Document does not exist and is not loaded in this Neovim instance',
+          path = Normalize.wire_path(path),
+        }
+      end
+      bufnr = vim.fn.bufadd(path)
+      vim.fn.bufload(bufnr)
+    end
     clients = (operation.handler == 'diagnostics' or operation.name == 'rename_apply')
         and vim.lsp.get_clients({ bufnr = bufnr })
         or wait_for_clients(bufnr, timeout_ms, operation.method)

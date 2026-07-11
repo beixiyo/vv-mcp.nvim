@@ -273,4 +273,11 @@ function M.apply(transaction)
   return true
 end
 
+---恢复 WorkspaceEdit 事务预览时的 buffer 与磁盘内容
+---供文件系统操作在后续阶段失败时补偿已经保存的文本编辑
+---@param transaction table M.prepare 返回的事务
+function M.restore(transaction)
+  rollback(transaction, true)
+end
+
 return M

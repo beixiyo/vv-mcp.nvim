@@ -20,6 +20,7 @@ use crate::{
 
 const LSP_REQUEST: &str = "return require('vv-mcp.lsp').request(...)";
 const EDITOR_REQUEST: &str = "return require('vv-mcp.editor').request(...)";
+const WORKSPACE_REQUEST: &str = "return require('vv-mcp.workspace').request(...)";
 const DEFAULT_LSP_TIMEOUT_MS: u32 = 3000;
 const RPC_TIMEOUT_MARGIN_MS: u64 = 1000;
 
@@ -148,6 +149,29 @@ Use list_instances first when more than one Neovim project is running. read_buff
         }
     }
 
+    #[tool(
+        description = r#"Safely rename a file or directory inside one Neovim workspace.
+
+OPERATIONS
+- rename_resource_preview: requires oldUri and newUri. Collects workspace/willRenameFiles edits, validates paths and live buffers, and returns a single-use resourceRenameId without modifying files.
+- rename_resource_apply: requires resourceRenameId and the same instanceId used for preview. Revalidates the transaction, applies import/reference edits, renames the resource on disk, synchronizes loaded buffers, saves edits, and sends workspace/didRenameFiles.
+
+Both paths must be absolute and remain inside one workspace root. Modified buffers under the source path must be saved before preview. Apply rejects stale, expired, reused, conflicting, or unsupported resource edits."#
+    )]
+    async fn workspace(&self, Parameters(params): Parameters<WorkspaceParams>) -> String {
+        match self.run_workspace(&params).await {
+            Ok(result) => self
+                .output
+                .format_workspace(params.operation.as_str(), result),
+            Err(error) => self.output.format_workspace(
+                params.operation.as_str(),
+                serde_json::json!({
+                  "error": { "code": "request_failed", "message": error }
+                }),
+            ),
+        }
+    }
+
     #[tool(description = "Report the vv-mcp server and registry status.")]
     async fn health(&self) -> String {
         serde_json::json!({
@@ -236,6 +260,26 @@ impl VvMcpServer {
         }
         Err(last_error.unwrap_or_else(|| "Neovim instance became unavailable".into()))
     }
+
+    async fn run_workspace(&self, params: &WorkspaceParams) -> Result<Value, String> {
+        params.validate()?;
+        let instances = self.instances().await.map_err(|error| error.to_string())?;
+        let instance = resolve_instance(
+            &instances.instances,
+            params.instance_id.as_deref(),
+            params.old_uri.as_deref(),
+        )
+        .cloned()
+        .map_err(|error| error.to_string())?;
+        let mut client = NvimClient::connect(&instance.socket)
+            .await
+            .map_err(|error| error.to_string())?;
+        let value = serde_json::to_value(params).map_err(|error| error.to_string())?;
+        client
+            .exec_lua_with_timeout(WORKSPACE_REQUEST, vec![value], Duration::from_secs(7))
+            .await
+            .map_err(|error| error.to_string())
+    }
 }
 
 fn rpc_timeout(timeout_ms: Option<u32>) -> Duration {
@@ -286,6 +330,70 @@ enum EditorOperation {
     ListBuffers,
     ReadBuffer,
     GetSelection,
+}
+
+#[derive(Debug, Deserialize, Serialize, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase")]
+struct WorkspaceParams {
+    /// 要执行的工作区资源操作
+    operation: WorkspaceOperation,
+    /// 预览阶段的源文件或目录绝对路径
+    #[serde(skip_serializing_if = "Option::is_none")]
+    old_uri: Option<String>,
+    /// 预览阶段的目标文件或目录绝对路径
+    #[serde(skip_serializing_if = "Option::is_none")]
+    new_uri: Option<String>,
+    /// rename_resource_preview 返回的单次事务 ID
+    #[serde(skip_serializing_if = "Option::is_none")]
+    resource_rename_id: Option<String>,
+    /// list_instances 返回的实例 ID；apply 阶段必须复用 preview 所在实例
+    #[serde(skip_serializing_if = "Option::is_none")]
+    instance_id: Option<String>,
+    /// 等待 LSP willRenameFiles 响应的超时时间，默认 5000ms
+    #[serde(skip_serializing_if = "Option::is_none")]
+    timeout_ms: Option<u32>,
+}
+
+#[derive(Debug, Deserialize, Serialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+enum WorkspaceOperation {
+    RenameResourcePreview,
+    RenameResourceApply,
+}
+
+impl WorkspaceOperation {
+    fn as_str(&self) -> &'static str {
+        match self {
+            Self::RenameResourcePreview => "rename_resource_preview",
+            Self::RenameResourceApply => "rename_resource_apply",
+        }
+    }
+}
+
+impl WorkspaceParams {
+    fn validate(&self) -> Result<(), String> {
+        match self.operation {
+            WorkspaceOperation::RenameResourcePreview => {
+                if self.old_uri.as_deref().is_none_or(str::is_empty)
+                    || self.new_uri.as_deref().is_none_or(str::is_empty)
+                {
+                    return Err("oldUri and newUri are required for rename_resource_preview".into());
+                }
+            }
+            WorkspaceOperation::RenameResourceApply => {
+                if self.resource_rename_id.as_deref().is_none_or(str::is_empty) {
+                    return Err("resourceRenameId is required for rename_resource_apply".into());
+                }
+                if self.instance_id.as_deref().is_none_or(str::is_empty) {
+                    return Err(
+                        "instanceId from rename_resource_preview is required for rename_resource_apply"
+                            .into(),
+                    );
+                }
+            }
+        }
+        Ok(())
+    }
 }
 
 #[derive(Debug, Deserialize, Serialize, schemars::JsonSchema)]
@@ -460,7 +568,7 @@ impl ServerHandler for VvMcpServer {
         ServerInfo::new(ServerCapabilities::builder().enable_tools().build())
             .with_server_info(Implementation::new("vv-mcp", env!("CARGO_PKG_VERSION")))
             .with_instructions(
-                "Pass native absolute paths and 1-based positions. Omit instanceId for automatic routing by uri; use list_instances only to inspect or disambiguate projects. When a symbol position is uncertain, locate it with document_symbols for a known file or workspace_symbols for a project query, then reuse the returned range start. For writes, always follow the preview-to-apply flow described by the lsp tool.",
+                "Pass native absolute paths and 1-based positions. Omit instanceId for automatic routing by uri; use list_instances only to inspect or disambiguate projects. When a symbol position is uncertain, locate it with document_symbols for a known file or workspace_symbols for a project query, then reuse the returned range start. For writes, always follow the preview-to-apply flow described by the lsp or workspace tool.",
             )
     }
 }
@@ -508,6 +616,32 @@ mod tests {
                 "operation": "inlay_hints",
                 "uri": "/code/file.ts"
             })
+        );
+    }
+
+    #[test]
+    fn validates_resource_rename_stage_requirements() {
+        let preview = WorkspaceParams {
+            operation: WorkspaceOperation::RenameResourcePreview,
+            old_uri: Some("/code/old.ts".into()),
+            new_uri: Some("/code/new.ts".into()),
+            resource_rename_id: None,
+            instance_id: None,
+            timeout_ms: None,
+        };
+        assert!(preview.validate().is_ok());
+
+        let apply_without_instance = WorkspaceParams {
+            operation: WorkspaceOperation::RenameResourceApply,
+            old_uri: None,
+            new_uri: None,
+            resource_rename_id: Some("rename-1".into()),
+            instance_id: None,
+            timeout_ms: None,
+        };
+        assert_eq!(
+            apply_without_instance.validate().unwrap_err(),
+            "instanceId from rename_resource_preview is required for rename_resource_apply"
         );
     }
 }

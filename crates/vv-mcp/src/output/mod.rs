@@ -12,6 +12,7 @@ mod markdown;
 mod model;
 mod rename;
 mod symbols;
+mod workspace;
 
 use serde_json::Value;
 
@@ -60,6 +61,10 @@ impl OutputConfig {
                 }
             }
         }
+    }
+
+    pub fn format_workspace(&self, operation: &str, raw: Value) -> String {
+        workspace::format(operation, raw, self.max_results, self.format)
     }
 }
 
