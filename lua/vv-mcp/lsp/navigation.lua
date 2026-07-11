@@ -19,7 +19,9 @@ function M.request(context, operation)
         },
       }
       if operation.name == 'references' then
-        request_params.context = { includeDeclaration = true }
+        request_params.context = {
+          includeDeclaration = context.params.includeDeclaration ~= false,
+        }
       end
 
       local response, error = client:request_sync(

@@ -128,10 +128,13 @@ local function calls(context, operation)
   for _, call in ipairs(response and response.result or {}) do
     local target = operation.name == 'incoming_calls' and call.from or call.to
     if target then
-      items[#items + 1] = {
-        node = store_node(client, target),
-        fromRanges = Normalize.result(vim.deepcopy(call.fromRanges or {})),
-      }
+      local output = store_node(client, target)
+      if context.params.includeExternal ~= false or output.origin == 'workspace' then
+        items[#items + 1] = {
+          node = output,
+          fromRanges = Normalize.result(vim.deepcopy(call.fromRanges or {})),
+        }
+      end
     end
   end
   return {

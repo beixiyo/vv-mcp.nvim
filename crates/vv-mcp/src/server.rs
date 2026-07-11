@@ -85,17 +85,17 @@ CHOOSE BY INTENT
 No position required:
 - document_symbols: outline symbols in one file.
 - workspace_symbols: search project symbols; requires query.
-- diagnostics: diagnostics for one file.
-- workspace_diagnostics: diagnostics under a workspace path.
+- diagnostics: diagnostics for one file; optional severities and sources filters.
+- workspace_diagnostics: diagnostics under a workspace path; optional severities and sources filters.
 - document_links: navigable targets in one document.
 - inlay_hints: inferred types and parameter-name hints; optionally accepts startLine and endLine.
 - prepare_call_hierarchy: create call graph nodes at a symbol position and return callId values.
-- incoming_calls, outgoing_calls: query one graph layer by callId; returned nodes include new callId values for further traversal.
+- incoming_calls, outgoing_calls: query one graph layer by callId; returned nodes include new callId values for further traversal; set includeExternal=false for workspace-only nodes.
 
 Symbol position required:
 - hover: signature and documentation.
 - definition, declaration, type_definition, implementation: navigation locations.
-- references: project references grouped by file.
+- references: project references grouped by file; includeDeclaration defaults to true.
 - document_highlight: semantic occurrences in the current document.
 - code_actions: fixes and refactors available at a position.
 
@@ -239,6 +239,27 @@ struct LspParams {
     /// 调用层级节点 ID；由 prepare 或上一层调用结果返回
     #[serde(skip_serializing_if = "Option::is_none")]
     call_id: Option<String>,
+    /// `references` 是否包含符号声明，默认为 true
+    #[serde(skip_serializing_if = "Option::is_none")]
+    include_declaration: Option<bool>,
+    /// `diagnostics` 与 `workspace_diagnostics` 的可选严重级别筛选
+    #[serde(skip_serializing_if = "Option::is_none")]
+    severities: Option<Vec<DiagnosticSeverityFilter>>,
+    /// `diagnostics` 与 `workspace_diagnostics` 的可选 source 筛选
+    #[serde(skip_serializing_if = "Option::is_none")]
+    sources: Option<Vec<String>>,
+    /// `incoming_calls` 与 `outgoing_calls` 是否包含依赖和工作区外节点，默认为 true
+    #[serde(skip_serializing_if = "Option::is_none")]
+    include_external: Option<bool>,
+}
+
+#[derive(Debug, Deserialize, Serialize, schemars::JsonSchema)]
+#[serde(rename_all = "lowercase")]
+enum DiagnosticSeverityFilter {
+    Error,
+    Warning,
+    Information,
+    Hint,
 }
 
 #[derive(Debug, Deserialize, Serialize, schemars::JsonSchema)]
@@ -339,6 +360,10 @@ mod tests {
             start_line: None,
             end_line: None,
             call_id: None,
+            include_declaration: None,
+            severities: None,
+            sources: None,
+            include_external: None,
         };
         let value = serde_json::to_value(params).unwrap();
 

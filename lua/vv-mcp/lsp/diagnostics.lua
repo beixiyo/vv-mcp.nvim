@@ -3,6 +3,13 @@ local Normalize = require('vv-mcp.lsp.normalize')
 
 local M = {}
 
+local severity_names = {
+  [vim.diagnostic.severity.ERROR] = 'error',
+  [vim.diagnostic.severity.WARN] = 'warning',
+  [vim.diagnostic.severity.INFO] = 'information',
+  [vim.diagnostic.severity.HINT] = 'hint',
+}
+
 local function is_under(root, path)
   if path == root then return true end
   local prefix = root:sub(-1) == '/' and root or root .. '/'
@@ -36,10 +43,27 @@ function M.request(context, operation)
     operation.scope == 'document' and context.bufnr or nil
   )
   local items = {}
+  local allowed_severities = type(context.params.severities) == 'table'
+      and vim.iter(context.params.severities):fold({}, function(result, severity)
+        result[severity] = true
+        return result
+      end)
+      or nil
+  local allowed_sources = type(context.params.sources) == 'table'
+      and vim.iter(context.params.sources):fold({}, function(result, source)
+        result[source:lower()] = true
+        return result
+      end)
+      or nil
   local root = Normalize.wire_path(vim.fn.resolve(context.path))
   for _, diagnostic in ipairs(diagnostics) do
     local item = compact(diagnostic)
-    if item.path ~= '' and (operation.scope == 'document' or is_under(root, item.path)) then
+    local severity_matches = not allowed_severities
+      or allowed_severities[severity_names[diagnostic.severity]]
+    local source_matches = not allowed_sources
+      or (type(diagnostic.source) == 'string' and allowed_sources[diagnostic.source:lower()])
+    if severity_matches and source_matches
+        and item.path ~= '' and (operation.scope == 'document' or is_under(root, item.path)) then
       items[#items + 1] = item
     end
   end
