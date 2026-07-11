@@ -27,6 +27,7 @@ pub(super) fn format(
             .filter_map(compact_call)
             .collect::<Vec<_>>()
     };
+    items.sort_by_key(call_priority);
     let total = items.len();
     items.truncate(max_results);
     let truncated = (total > max_results).then_some(Truncated {
@@ -71,6 +72,7 @@ fn compact_node(node: &Value) -> Option<Value> {
         "client": node["client"].as_str(),
         "name": node["name"].as_str()?,
         "kind": symbol_kind(node["kind"].as_u64()),
+        "origin": node["origin"].as_str().unwrap_or("external"),
         "path": node["uri"].as_str()?,
         "range": compact_range(&node["range"])?,
         "selectionRange": compact_range(&node["selectionRange"]),
@@ -109,9 +111,10 @@ fn format_markdown(
     }
     for item in items {
         lines.push(format!(
-            "- `{}` ({}) at `{}`: {}{}\n  Call ID: `{}`{}",
+            "- `{}` ({}, {}) at `{}`: {}{}\n  Call ID: `{}`{}",
             item["name"].as_str().unwrap_or("unknown"),
             item["kind"].as_str().unwrap_or("Unknown"),
+            item["origin"].as_str().unwrap_or("external"),
             item["path"].as_str().unwrap_or_default(),
             item["selectionRange"]
                 .as_str()
@@ -143,6 +146,20 @@ fn format_markdown(
         ));
     }
     lines.join("\n")
+}
+
+fn call_priority(item: &Value) -> (u8, u8) {
+    let origin = match item["origin"].as_str() {
+        Some("workspace") => 0,
+        Some("dependency") => 1,
+        _ => 2,
+    };
+    let kind = match item["kind"].as_str() {
+        Some("Function") | Some("Constructor") => 0,
+        Some("Method") => 1,
+        _ => 2,
+    };
+    (origin, kind)
 }
 
 fn symbol_kind(kind: Option<u64>) -> &'static str {

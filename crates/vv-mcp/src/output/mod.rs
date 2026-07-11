@@ -430,9 +430,22 @@ mod tests {
           "sourceCallId": "source-1",
           "calls": [{
             "node": {
+              "callId": "dependency-1",
+              "name": "then",
+              "kind": 6,
+              "origin": "dependency",
+              "uri": "/code/node_modules/types/lib.es5.d.ts",
+              "range": { "start": { "line": 1, "character": 1 }, "end": { "line": 2, "character": 2 } },
+              "selectionRange": { "start": { "line": 2, "character": 1 }, "end": { "line": 2, "character": 5 } },
+              "expiresAt": 123
+            },
+            "fromRanges": []
+          }, {
+            "node": {
               "callId": "next-1",
               "name": "useTimer",
               "kind": 12,
+              "origin": "workspace",
               "uri": "/code/timer.ts",
               "range": { "start": { "line": 10, "character": 1 }, "end": { "line": 20, "character": 2 } },
               "selectionRange": { "start": { "line": 10, "character": 5 }, "end": { "line": 10, "character": 13 } },
@@ -455,6 +468,7 @@ mod tests {
         assert_eq!(output["sourceCallId"], "source-1");
         assert_eq!(output["items"][0]["callId"], "next-1");
         assert_eq!(output["items"][0]["kind"], "Function");
+        assert_eq!(output["items"][0]["origin"], "workspace");
         assert_eq!(output["items"][0]["selectionRange"], "10:5-10:13");
         assert_eq!(output["items"][0]["fromRanges"][0], "15:3-15:12");
         assert_eq!(
