@@ -150,22 +150,35 @@ local function list_actions(context, operation)
         errors[client.name] = tostring(error)
       end
       for _, action in ipairs(response and response.result or {}) do
-        local id = action_id(action.title or action.command or client.name)
-        local expires_at = os.time() + ttl_seconds
-        transactions[id] = {
-          action = action,
-          client_id = client.id,
-          expires_at = expires_at,
-        }
-        items[#items + 1] = {
-          actionId = id,
-          client = client.name,
-          title = action.title or action.command or 'Untitled action',
-          kind = action.kind,
-          preferred = action.isPreferred == true,
-          disabled = action.disabled and action.disabled.reason or nil,
-          expiresAt = expires_at,
-        }
+        local temporary = { action = action, client_id = client.id }
+        local resolved, resolve_error = resolve_action(temporary, context)
+        if resolved then
+          local workspace, workspace_error = WorkspaceEdit.prepare({
+            { edit = resolved.edit, encoding = client.offset_encoding or 'utf-16' },
+          })
+          if workspace and workspace.edits_count > 0 then
+            local id = action_id(resolved.title or client.name)
+            local expires_at = os.time() + ttl_seconds
+            transactions[id] = {
+              action = resolved,
+              client_id = client.id,
+              workspace = workspace,
+              expires_at = expires_at,
+            }
+            items[#items + 1] = {
+              actionId = id,
+              client = client.name,
+              title = resolved.title or 'Untitled action',
+              kind = resolved.kind,
+              preferred = resolved.isPreferred == true,
+              expiresAt = expires_at,
+            }
+          elseif workspace_error then
+            errors[client.name] = workspace_error.message
+          end
+        elseif resolve_error and resolve_error.code ~= 'code_action_command_unsupported' then
+          errors[client.name] = resolve_error.message
+        end
       end
     end
   end
@@ -184,33 +197,20 @@ local function preview(context)
   if not transaction then
     return { error = { code = 'code_action_not_found', message = 'Code action not found or expired' } }
   end
-  local action, client_or_error = resolve_action(transaction, context)
-  if not action then
+  local fresh, stale_error = WorkspaceEdit.validate(transaction.workspace)
+  if not fresh then
     transactions[id] = nil
-    return { error = client_or_error }
+    return { error = stale_error }
   end
-  local workspace_transaction, error = WorkspaceEdit.prepare({
-    { edit = action.edit, encoding = client_or_error.offset_encoding or 'utf-16' },
-  })
-  if not workspace_transaction then
-    transactions[id] = nil
-    return { error = error }
-  end
-  if workspace_transaction.edits_count == 0 then
-    transactions[id] = nil
-    return { error = { code = 'code_action_no_edit', message = 'Code action returned no text edits' } }
-  end
-  transaction.workspace = workspace_transaction
-  transaction.action = action
   return {
     operation = 'code_action_preview',
     actionId = id,
-    title = action.title,
-    kind = action.kind,
-    filesChanged = workspace_transaction.files_changed,
-    editsCount = workspace_transaction.edits_count,
+    title = transaction.action.title,
+    kind = transaction.action.kind,
+    filesChanged = transaction.workspace.files_changed,
+    editsCount = transaction.workspace.edits_count,
     expiresAt = transaction.expires_at,
-    changes = workspace_transaction.changes,
+    changes = transaction.workspace.changes,
   }
 end
 

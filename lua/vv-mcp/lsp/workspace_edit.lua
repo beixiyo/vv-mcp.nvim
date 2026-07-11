@@ -246,11 +246,8 @@ end
 ---@return boolean ok
 ---@return table? error
 function M.apply(transaction)
-  for _, state in pairs(transaction.states) do
-    if not state_matches(state) then
-      return false, { code = 'workspace_edit_stale', message = 'A target buffer or file changed after preview' }
-    end
-  end
+  local fresh, stale_error = M.validate(transaction)
+  if not fresh then return false, stale_error end
   for _, item in ipairs(transaction.edits) do
     local ok, error = pcall(vim.lsp.util.apply_workspace_edit, item.edit, item.encoding)
     if not ok then
@@ -269,6 +266,22 @@ function M.apply(transaction)
   if not saved then
     rollback(transaction, true)
     return false, { code = 'workspace_edit_save_failed', message = save_error }
+  end
+  return true
+end
+
+---检查 WorkspaceEdit 自准备后是否仍指向同一份 buffer 与磁盘内容
+---@param transaction table M.prepare 返回的事务
+---@return boolean fresh
+---@return table? error
+function M.validate(transaction)
+  for _, state in pairs(transaction.states) do
+    if not state_matches(state) then
+      return false, {
+        code = 'workspace_edit_stale',
+        message = 'A target buffer or file changed after the action was created',
+      }
+    end
   end
   return true
 end
