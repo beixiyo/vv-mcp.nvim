@@ -19,6 +19,7 @@ use crate::{
 };
 
 const LSP_REQUEST: &str = "return require('vv-mcp.lsp').request(...)";
+const EDITOR_REQUEST: &str = "return require('vv-mcp.editor').request(...)";
 const DEFAULT_LSP_TIMEOUT_MS: u32 = 3000;
 const RPC_TIMEOUT_MARGIN_MS: u64 = 1000;
 
@@ -124,6 +125,29 @@ Preview operations never modify files. Apply operations save to disk and reject 
         }
     }
 
+    #[tool(
+        description = r#"Read live editor state from one Neovim instance without modifying buffers or files.
+
+OPERATIONS
+- current_context: current buffer, cursor, mode, cwd, window, tab, filetype, modified state, and attached LSP clients. Pass instanceId.
+- list_buffers: editable loaded file buffers with visibility, modified state, line count, filetype, and attached LSP clients. Pass instanceId; set includeSpecial=true to include plugin, terminal, help, and other special buffers.
+- read_buffer: read live buffer text, including unsaved changes. Pass uri; startLine/endLine are optional 1-based inclusive bounds. maxLines defaults to 200.
+- get_selection: current Visual, Visual Line, or Visual Block selection with 1-based range and selected text. Pass instanceId.
+
+Use list_instances first when more than one Neovim project is running. read_buffer can route automatically by uri; current-state operations require instanceId because they have no file path to disambiguate. This tool is read-only."#
+    )]
+    async fn editor(&self, Parameters(params): Parameters<EditorParams>) -> String {
+        match self.run_editor(&params).await {
+            Ok(result) => serde_json::to_string(&result).unwrap_or_else(|error| {
+                serde_json::json!({ "error": { "code": "serialization_failed", "message": error.to_string() } }).to_string()
+            }),
+            Err(error) => serde_json::json!({
+                "error": { "code": "request_failed", "message": error }
+            })
+            .to_string(),
+        }
+    }
+
     #[tool(description = "Report the vv-mcp server and registry status.")]
     async fn health(&self) -> String {
         serde_json::json!({
@@ -178,6 +202,40 @@ impl VvMcpServer {
             .exec_lua_with_timeout(LSP_REQUEST, vec![params], rpc_timeout)
             .await
     }
+
+    async fn run_editor(&self, params: &EditorParams) -> Result<Value, String> {
+        let mut last_error = None;
+        for attempt in 0..2 {
+            let instances = self.instances().await.map_err(|error| error.to_string())?;
+            let instance = resolve_instance(
+                &instances.instances,
+                params.instance_id.as_deref(),
+                params.uri.as_deref(),
+            )
+            .cloned()
+            .map_err(|error| error.to_string())?;
+            let mut client = match NvimClient::connect(&instance.socket).await {
+                Ok(client) => client,
+                Err(error) if attempt == 0 && error.proves_instance_is_stale() => {
+                    last_error = Some(error.to_string());
+                    continue;
+                }
+                Err(error) => return Err(error.to_string()),
+            };
+            let value = serde_json::to_value(params).map_err(|error| error.to_string())?;
+            match client
+                .exec_lua_with_timeout(EDITOR_REQUEST, vec![value], Duration::from_secs(4))
+                .await
+            {
+                Ok(result) => return Ok(result),
+                Err(error) if attempt == 0 && error.proves_instance_is_stale() => {
+                    last_error = Some(error.to_string());
+                }
+                Err(error) => return Err(error.to_string()),
+            }
+        }
+        Err(last_error.unwrap_or_else(|| "Neovim instance became unavailable".into()))
+    }
 }
 
 fn rpc_timeout(timeout_ms: Option<u32>) -> Duration {
@@ -194,6 +252,40 @@ struct ResolveInstanceParams {
     instance_id: Option<String>,
     /// 用于自动匹配工作区的 Unix 或 Windows 绝对路径
     uri: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Serialize, schemars::JsonSchema)]
+#[serde(rename_all = "camelCase")]
+struct EditorParams {
+    /// 要读取的编辑器状态
+    operation: EditorOperation,
+    /// `list_instances` 返回的实例 ID；当前状态操作必须提供
+    #[serde(skip_serializing_if = "Option::is_none")]
+    instance_id: Option<String>,
+    /// `read_buffer` 要读取的原生 Unix 或 Windows 绝对路径
+    #[serde(skip_serializing_if = "Option::is_none")]
+    uri: Option<String>,
+    /// `read_buffer` 的可选起始行，从 1 开始且包含该行
+    #[serde(skip_serializing_if = "Option::is_none")]
+    start_line: Option<u32>,
+    /// `read_buffer` 的可选结束行，从 1 开始且包含该行
+    #[serde(skip_serializing_if = "Option::is_none")]
+    end_line: Option<u32>,
+    /// `read_buffer` 最多返回的行数，默认为 200
+    #[serde(skip_serializing_if = "Option::is_none")]
+    max_lines: Option<u32>,
+    /// `list_buffers` 是否包含插件、终端、帮助页等特殊 buffer，默认为 false
+    #[serde(skip_serializing_if = "Option::is_none")]
+    include_special: Option<bool>,
+}
+
+#[derive(Debug, Deserialize, Serialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+enum EditorOperation {
+    CurrentContext,
+    ListBuffers,
+    ReadBuffer,
+    GetSelection,
 }
 
 #[derive(Debug, Deserialize, Serialize, schemars::JsonSchema)]

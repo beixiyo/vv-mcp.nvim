@@ -22,6 +22,17 @@ require('vv-mcp').setup({
 
 `dependency_markers` uses normalized path substrings rather than glob or Lua patterns. Providing the option replaces the complete default list
 
+## Live editor context
+
+The read-only `editor` MCP tool exposes Neovim state that may differ from files on disk:
+
+- `current_context`: current buffer, cursor, mode, working directory, and attached LSP clients
+- `list_buffers`: editable loaded file buffers with visibility and modified state; `includeSpecial=true` also returns plugin, terminal, help, and other special buffers
+- `read_buffer`: live text from one loaded buffer, including unsaved changes; supports 1-based line ranges and defaults to 200 lines
+- `get_selection`: current Visual selection text and its 1-based, end-exclusive range
+
+Use `instanceId` for current-state operations when several Neovim instances are running. `read_buffer` can select an instance automatically from its absolute `uri`
+
 ## Output configuration
 
 LSP results are flattened before they reach the AI: URI wrappers and redundant LSP ranges are removed, locations are grouped by file path, duplicate locations are removed, and ranges use compact 1-based `line:character-line:character` strings
