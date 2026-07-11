@@ -70,7 +70,37 @@ impl VvMcpServer {
     }
 
     #[tool(
-        description = "Run LSP operations through the matching Neovim instance. Positions are 1-based. To avoid guessing line and character, first call document_symbols when the file is known, or workspace_symbols with query when searching the project; then reuse the returned range start for navigation, references, hover, document_highlight, prepare_rename, and code_actions. For signature_help, use a position inside the intended call argument. Safe rename uses prepare_rename, rename_preview(newName), then rename_apply(renameId). Safe code actions use code_actions, code_action_preview(actionId), then code_action_apply(actionId). file_quickfix_preview collects all editable quickfix actions for a document before the same apply step. Preview operations never edit files; apply writes edited buffers to disk and rejects stale or expired transactions. Command-only code actions are not executed. List outputs are compact and capped by max-results."
+        description = r#"Execute an LSP operation through the Neovim instance matching `uri`.
+
+PATHS AND POSITIONS
+- Pass a native absolute path. Unix: /home/user/file.ts. Windows: C:/work/file.ts.
+- Plain paths are recommended; do not manually construct file:// URIs.
+- Input and output positions are 1-based. Output range `45:17-45:32` can be reused as line=45, character=17.
+- Do not guess symbol positions. For a known file, call document_symbols first. For a project search, call workspace_symbols with query.
+
+CHOOSE BY INTENT
+No position required:
+- document_symbols: outline symbols in one file.
+- workspace_symbols: search project symbols; requires query.
+- diagnostics: diagnostics for one file.
+- workspace_diagnostics: diagnostics under a workspace path.
+
+Symbol position required:
+- hover: signature and documentation.
+- definition, declaration, type_definition, implementation: navigation locations.
+- references: project references grouped by file.
+- document_highlight: semantic occurrences in the current document.
+- code_actions: fixes and refactors available at a position.
+
+Call-site position required:
+- signature_help: pass a position inside the intended call argument.
+
+SAFE WRITE FLOWS
+- Rename: prepare_rename -> rename_preview(newName) -> rename_apply(renameId).
+- Specific fix: code_actions -> code_action_preview(actionId) -> code_action_apply(actionId).
+- Whole-file quick fixes: file_quickfix_preview -> code_action_apply(actionId).
+
+Preview operations never modify files. Apply operations save to disk and reject stale, expired, reused, or overlapping edits. Command-only code actions are not executed. List results are compact and limited by max-results."#
     )]
     async fn lsp(&self, Parameters(params): Parameters<LspParams>) -> String {
         match self.run_lsp(&params).await {
@@ -162,27 +192,27 @@ struct ResolveInstanceParams {
 #[derive(Debug, Deserialize, Serialize, schemars::JsonSchema)]
 #[serde(rename_all = "camelCase")]
 struct LspParams {
-    /// Read-only LSP operation to execute.
+    /// LSP operation to execute. Some apply operations write edits to disk; follow the safe write flows in the tool description.
     operation: LspOperation,
-    /// Absolute Unix or Windows file path. A file URI is accepted for compatibility.
+    /// Native absolute Unix or Windows path, such as /home/user/file.ts or C:/work/file.ts. Plain paths are recommended; a file URI is accepted for compatibility.
     uri: String,
-    /// 1-based line number. Required for position-based operations. Prefer the range start returned by document_symbols or workspace_symbols instead of counting manually.
+    /// 1-based line. Required only for position-based operations. Reuse the range start returned by document_symbols or workspace_symbols instead of counting manually.
     line: Option<u32>,
-    /// 1-based character offset. Required for position-based operations. Prefer the range start returned by symbol operations; signature_help needs a position inside the intended argument.
+    /// 1-based character. Required only for position-based operations. Reuse a symbol range start; signature_help instead needs a position inside the intended call argument.
     character: Option<u32>,
-    /// Exact instance ID from list_instances. Omit to match by path.
+    /// Exact instance ID from list_instances. Usually omit it to route automatically by uri; provide it to disambiguate overlapping instances.
     instance_id: Option<String>,
-    /// Search query. Required for workspace_symbols.
+    /// Non-empty symbol search query. Required only for workspace_symbols.
     query: Option<String>,
-    /// New symbol name. Required for rename_preview.
+    /// New symbol name. Required only for rename_preview.
     new_name: Option<String>,
-    /// Transaction ID returned by rename_preview. Required for rename_apply.
+    /// Transaction ID returned by rename_preview. Required only for rename_apply.
     rename_id: Option<String>,
-    /// Code action transaction ID. Returned by code_actions or file_quickfix_preview; required for code_action_preview and code_action_apply.
+    /// Code action ID. A candidate from code_actions must be passed to code_action_preview before apply; file_quickfix_preview returns an already previewed transaction ID.
     action_id: Option<String>,
-    /// Optional code action kind filter, such as quickfix or refactor.extract.
+    /// Optional code action kind filter for code_actions, such as quickfix or refactor.extract.
     action_kind: Option<String>,
-    /// Neovim-side LSP request timeout in milliseconds.
+    /// Optional Neovim-side LSP request timeout in milliseconds for unusually slow language servers.
     timeout_ms: Option<u32>,
 }
 
@@ -242,7 +272,7 @@ impl ServerHandler for VvMcpServer {
         ServerInfo::new(ServerCapabilities::builder().enable_tools().build())
             .with_server_info(Implementation::new("vv-mcp", env!("CARGO_PKG_VERSION")))
             .with_instructions(
-                "Use list_instances first. When line or character is uncertain, locate the symbol with document_symbols for a known file or workspace_symbols for a project query, then reuse its 1-based range start in position-based operations. signature_help instead needs a position inside the intended call argument.",
+                "Pass native absolute paths and 1-based positions. Omit instanceId for automatic routing by uri; use list_instances only to inspect or disambiguate projects. When a symbol position is uncertain, locate it with document_symbols for a known file or workspace_symbols for a project query, then reuse the returned range start. For writes, always follow the preview-to-apply flow described by the lsp tool.",
             )
     }
 }
