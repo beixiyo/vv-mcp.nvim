@@ -2,6 +2,26 @@
 
 Expose active Neovim LSP clients to AI agents through MCP
 
+## Neovim configuration
+
+Paths containing a dependency marker are classified as dependencies when filtering references and sorting call hierarchy nodes. Override the defaults through `setup` when a project uses a custom dependency directory:
+
+The defaults cover Node.js (`node_modules`, pnpm), Rust (Cargo and rustlib), Go module caches, Java Maven/Gradle caches, Python virtual environments, Mason packages, and vendored dependencies
+
+```lua
+require('vv-mcp').setup({
+  lsp = {
+    dependency_markers = {
+      '/node_modules/',
+      '/vendor/',
+      '/third_party/',
+    },
+  },
+})
+```
+
+`dependency_markers` uses normalized path substrings rather than glob or Lua patterns. Providing the option replaces the complete default list
+
 ## Output configuration
 
 LSP results are flattened before they reach the AI: URI wrappers and redundant LSP ranges are removed, locations are grouped by file path, duplicate locations are removed, and ranges use compact 1-based `line:character-line:character` strings

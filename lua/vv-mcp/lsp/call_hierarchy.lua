@@ -1,5 +1,6 @@
 ---管理调用层级节点，并查询一层调用者或被调用者
 local Normalize = require('vv-mcp.lsp.normalize')
+local PathOrigin = require('vv-mcp.lsp.path_origin')
 
 local M = {}
 local nodes = {}
@@ -18,37 +19,8 @@ local function purge_expired()
   end
 end
 
-local dependency_markers = {
-  '/node_modules/',
-  '/.pnpm/',
-  '/.cargo/registry/',
-  '/rustlib/',
-  '/mason/packages/',
-  '/vendor/',
-}
-
-local function is_under(root, path)
-  root = Normalize.wire_path(vim.fs.normalize(root)):gsub('/+$', '')
-  path = Normalize.wire_path(vim.fs.normalize(path))
-  return path == root or path:sub(1, #root + 1) == root .. '/'
-end
-
 local function node_origin(client, uri)
-  local path = vim.uri_to_fname(uri)
-  local wire_path = Normalize.wire_path(path)
-  for _, marker in ipairs(dependency_markers) do
-    if wire_path:find(marker, 1, true) then return 'dependency' end
-  end
-
-  local roots = {}
-  if client.root_dir then roots[#roots + 1] = client.root_dir end
-  for _, folder in ipairs(client.workspace_folders or {}) do
-    roots[#roots + 1] = vim.uri_to_fname(folder.uri)
-  end
-  for _, root in ipairs(roots) do
-    if is_under(root, path) then return 'workspace' end
-  end
-  return 'external'
+  return PathOrigin.classify(client, vim.uri_to_fname(uri))
 end
 
 local function store_node(client, item)
