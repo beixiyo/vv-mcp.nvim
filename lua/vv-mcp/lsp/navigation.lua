@@ -3,6 +3,46 @@ local Normalize = require('vv-mcp.lsp.normalize')
 
 local M = {}
 
+local dependency_markers = {
+  '/node_modules/',
+  '/.pnpm/',
+  '/.cargo/registry/',
+  '/rustlib/',
+  '/mason/packages/',
+  '/vendor/',
+}
+
+local function is_under(root, path)
+  root = Normalize.wire_path(vim.fs.normalize(root)):gsub('/+$', '')
+  path = Normalize.wire_path(vim.fs.normalize(path))
+  return path == root or path:sub(1, #root + 1) == root .. '/'
+end
+
+local function is_workspace_path(client, path)
+  local wire_path = Normalize.wire_path(path)
+  for _, marker in ipairs(dependency_markers) do
+    if wire_path:find(marker, 1, true) then return false end
+  end
+  if client.root_dir and is_under(client.root_dir, path) then return true end
+  for _, folder in ipairs(client.workspace_folders or {}) do
+    if is_under(vim.uri_to_fname(folder.uri), path) then return true end
+  end
+  return false
+end
+
+local function filter_locations(value, client, include_external, path_pattern)
+  if type(value) ~= 'table' then return value end
+  local filtered = {}
+  for _, location in ipairs(value) do
+    local path = location.uri or location.targetUri
+    local normalized = type(path) == 'string' and Normalize.wire_path(path) or ''
+    local external_matches = include_external or is_workspace_path(client, normalized)
+    local path_matches = not path_pattern or normalized:lower():find(path_pattern, 1, true)
+    if external_matches and path_matches then filtered[#filtered + 1] = location end
+  end
+  return filtered
+end
+
 ---向所有支持目标 method 的客户端请求导航结果
 ---@param context VVMcpLspContext 请求上下文
 ---@param operation VVMcpLspOperation 操作定义
@@ -30,9 +70,18 @@ function M.request(context, operation)
         context.timeout_ms,
         context.bufnr
       )
+      local result = response and Normalize.result(response.result) or nil
+      if operation.name == 'references' then
+        result = filter_locations(
+          result,
+          client,
+          context.params.includeExternal ~= false,
+          type(context.params.pathPattern) == 'string' and context.params.pathPattern:lower() or nil
+        )
+      end
       results[#results + 1] = {
         client = client.name,
-        result = response and Normalize.result(response.result) or nil,
+        result = result,
         error = error and tostring(error) or nil,
       }
     end

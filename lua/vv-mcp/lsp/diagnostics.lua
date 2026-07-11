@@ -55,6 +55,12 @@ function M.request(context, operation)
         return result
       end)
       or nil
+  local allowed_codes = type(context.params.codes) == 'table'
+      and vim.iter(context.params.codes):fold({}, function(result, code)
+        result[tostring(code):lower()] = true
+        return result
+      end)
+      or nil
   local root = Normalize.wire_path(vim.fn.resolve(context.path))
   for _, diagnostic in ipairs(diagnostics) do
     local item = compact(diagnostic)
@@ -62,7 +68,9 @@ function M.request(context, operation)
       or allowed_severities[severity_names[diagnostic.severity]]
     local source_matches = not allowed_sources
       or (type(diagnostic.source) == 'string' and allowed_sources[diagnostic.source:lower()])
-    if severity_matches and source_matches
+    local code_matches = not allowed_codes
+      or (diagnostic.code ~= nil and allowed_codes[tostring(diagnostic.code):lower()])
+    if severity_matches and source_matches and code_matches
         and item.path ~= '' and (operation.scope == 'document' or is_under(root, item.path)) then
       items[#items + 1] = item
     end

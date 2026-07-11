@@ -83,10 +83,10 @@ PATHS AND POSITIONS
 
 CHOOSE BY INTENT
 No position required:
-- document_symbols: outline symbols in one file.
+- document_symbols: outline symbols in one file; optional query and symbolKinds filters.
 - workspace_symbols: search project symbols; requires query.
-- diagnostics: diagnostics for one file; optional severities and sources filters.
-- workspace_diagnostics: diagnostics under a workspace path; optional severities and sources filters.
+- diagnostics: diagnostics for one file; optional severities, sources, and codes filters.
+- workspace_diagnostics: diagnostics under a workspace path; optional severities, sources, and codes filters.
 - document_links: navigable targets in one document.
 - inlay_hints: inferred types and parameter-name hints; optionally accepts startLine and endLine.
 - prepare_call_hierarchy: create call graph nodes at a symbol position and return callId values.
@@ -95,7 +95,7 @@ No position required:
 Symbol position required:
 - hover: signature and documentation.
 - definition, declaration, type_definition, implementation: navigation locations.
-- references: project references grouped by file; includeDeclaration defaults to true.
+- references: project references grouped by file; includeDeclaration defaults to true. Set includeExternal=false to keep workspace files, or pathPattern to match a normalized path substring.
 - document_highlight: semantic occurrences in the current document.
 - code_actions: fixes and refactors available at a position.
 
@@ -212,9 +212,12 @@ struct LspParams {
     /// `list_instances` 返回的实例 ID；通常省略并按 uri 自动路由，实例重叠时用于消歧
     #[serde(skip_serializing_if = "Option::is_none")]
     instance_id: Option<String>,
-    /// 非空符号搜索词，仅 `workspace_symbols` 需要
+    /// 非空符号搜索词；`workspace_symbols` 必填，`document_symbols` 可选且忽略大小写
     #[serde(skip_serializing_if = "Option::is_none")]
     query: Option<String>,
+    /// `document_symbols` 的可选符号类别筛选
+    #[serde(skip_serializing_if = "Option::is_none")]
+    symbol_kinds: Option<Vec<SymbolKindFilter>>,
     /// 新符号名，仅 `rename_preview` 需要
     #[serde(skip_serializing_if = "Option::is_none")]
     new_name: Option<String>,
@@ -248,9 +251,15 @@ struct LspParams {
     /// `diagnostics` 与 `workspace_diagnostics` 的可选 source 筛选
     #[serde(skip_serializing_if = "Option::is_none")]
     sources: Option<Vec<String>>,
-    /// `incoming_calls` 与 `outgoing_calls` 是否包含依赖和工作区外节点，默认为 true
+    /// `diagnostics` 与 `workspace_diagnostics` 的可选诊断 code 筛选，数字 code 也按字符串匹配
+    #[serde(skip_serializing_if = "Option::is_none")]
+    codes: Option<Vec<String>>,
+    /// `references`、`incoming_calls` 与 `outgoing_calls` 是否包含依赖和工作区外结果，默认为 true
     #[serde(skip_serializing_if = "Option::is_none")]
     include_external: Option<bool>,
+    /// `references` 的可选路径子串筛选；使用普通 Unix 路径片段，不是 glob 或正则
+    #[serde(skip_serializing_if = "Option::is_none")]
+    path_pattern: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Serialize, schemars::JsonSchema)]
@@ -260,6 +269,37 @@ enum DiagnosticSeverityFilter {
     Warning,
     Information,
     Hint,
+}
+
+#[derive(Debug, Deserialize, Serialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+enum SymbolKindFilter {
+    File,
+    Module,
+    Namespace,
+    Package,
+    Class,
+    Method,
+    Property,
+    Field,
+    Constructor,
+    Enum,
+    Interface,
+    Function,
+    Variable,
+    Constant,
+    String,
+    Number,
+    Boolean,
+    Array,
+    Object,
+    Key,
+    Null,
+    EnumMember,
+    Struct,
+    Event,
+    Operator,
+    TypeParameter,
 }
 
 #[derive(Debug, Deserialize, Serialize, schemars::JsonSchema)]
@@ -352,6 +392,7 @@ mod tests {
             character: None,
             instance_id: None,
             query: None,
+            symbol_kinds: None,
             new_name: None,
             rename_id: None,
             action_id: None,
@@ -363,7 +404,9 @@ mod tests {
             include_declaration: None,
             severities: None,
             sources: None,
+            codes: None,
             include_external: None,
+            path_pattern: None,
         };
         let value = serde_json::to_value(params).unwrap();
 
