@@ -129,8 +129,8 @@ local operations = {
     scope = 'document',
     handler = 'code_actions',
   },
-  file_quickfix_preview = {
-    name = 'file_quickfix_preview',
+  fix_document_preview = {
+    name = 'fix_document_preview',
     method = 'textDocument/codeAction',
     requires_position = false,
     scope = 'document',

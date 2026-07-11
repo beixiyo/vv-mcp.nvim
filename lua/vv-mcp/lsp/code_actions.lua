@@ -97,6 +97,12 @@ local function request_params(context, whole_file)
   }
 end
 
+local function fix_all_params(context)
+  local params = request_params(context, true)
+  params.context.only = { 'source.fixAll' }
+  return params
+end
+
 local function resolve_action(transaction, context)
   local action = transaction.action
   if action.disabled then
@@ -208,7 +214,7 @@ local function preview(context)
   }
 end
 
-local function file_quickfix_preview(context, operation)
+local function document_fix_preview(context, operation)
   purge_expired()
   local edits = {}
   local titles = {}
@@ -216,6 +222,7 @@ local function file_quickfix_preview(context, operation)
   local seen = {}
 
   local function collect(client, params)
+    local collected = 0
     local response = client:request_sync(operation.method, params, context.timeout_ms, context.bufnr)
     for _, action in ipairs(response and response.result or {}) do
       local temporary = { action = action, client_id = client.id }
@@ -233,16 +240,23 @@ local function file_quickfix_preview(context, operation)
           }
           titles[#titles + 1] = resolved.title or 'Untitled action'
           clients[client.name] = true
+          collected = collected + 1
         end
       end
     end
+    return collected
   end
 
   for _, client in ipairs(context.clients) do
     if client:supports_method(operation.method, context.bufnr) then
-      collect(client, request_params(context, true))
-      for _, diagnostic in ipairs(client_diagnostics(context, client)) do
-        collect(client, diagnostic_params(context, diagnostic))
+      local fix_all_count = operation.name == 'fix_document_preview'
+          and collect(client, fix_all_params(context))
+          or 0
+      if fix_all_count == 0 then
+        collect(client, request_params(context, true))
+        for _, diagnostic in ipairs(client_diagnostics(context, client)) do
+          collect(client, diagnostic_params(context, diagnostic))
+        end
       end
     end
   end
@@ -251,7 +265,7 @@ local function file_quickfix_preview(context, operation)
   end
   local workspace_transaction, error = WorkspaceEdit.prepare(edits)
   if not workspace_transaction then return { error = error } end
-  local id = action_id('file-quickfix')
+  local id = action_id(operation.name)
   local expires_at = os.time() + ttl_seconds
   transactions[id] = {
     workspace = workspace_transaction,
@@ -306,7 +320,7 @@ end
 function M.request(context, operation)
   if operation.name == 'code_actions' then return list_actions(context, operation) end
   if operation.name == 'code_action_preview' then return preview(context) end
-  if operation.name == 'file_quickfix_preview' then return file_quickfix_preview(context, operation) end
+  if operation.name == 'fix_document_preview' then return document_fix_preview(context, operation) end
   return apply(context)
 end
 

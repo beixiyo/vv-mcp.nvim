@@ -14,7 +14,7 @@ pub(super) fn format(
 ) -> String {
     match operation {
         "code_actions" => format_list(raw, max_results, format),
-        "code_action_preview" | "file_quickfix_preview" => {
+        "code_action_preview" | "fix_document_preview" => {
             format_preview(operation, raw, max_results, format)
         }
         "code_action_apply" => format_apply(raw, format),
@@ -108,8 +108,8 @@ fn format_preview(operation: &str, raw: Value, max_results: usize, format: Outpu
     match format {
         OutputFormat::Json => to_json(&output),
         OutputFormat::Markdown => {
-            let title = if operation == "file_quickfix_preview" {
-                "File Quickfix Preview"
+            let title = if operation == "fix_document_preview" {
+                "Fix Document Preview"
             } else {
                 "Code Action Preview"
             };

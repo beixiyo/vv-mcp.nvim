@@ -103,7 +103,7 @@ Call-site position required:
 SAFE WRITE FLOWS
 - Rename: prepare_rename -> rename_preview(newName) -> rename_apply(renameId).
 - Specific fix: code_actions -> code_action_preview(actionId) -> code_action_apply(actionId).
-- Whole-file quick fixes: file_quickfix_preview -> code_action_apply(actionId).
+- Fix a document: fix_document_preview -> code_action_apply(actionId). It prefers each LSP's source.fixAll and falls back to diagnostic quick fixes.
 
 Preview operations never modify files. Apply operations save to disk and reject stale, expired, reused, or overlapping edits. Command-only code actions are not executed. List results are compact and limited by max-results."#
     )]
@@ -219,7 +219,7 @@ struct LspParams {
     /// `rename_preview` 返回的事务 ID，仅 `rename_apply` 需要
     #[serde(skip_serializing_if = "Option::is_none")]
     rename_id: Option<String>,
-    /// Code Action ID；候选动作必须先预览，全文件 Quick Fix 返回的 ID 已完成预览
+    /// Code Action ID；候选动作必须先预览，全文件修复操作返回的 ID 已完成预览
     #[serde(skip_serializing_if = "Option::is_none")]
     action_id: Option<String>,
     /// `code_actions` 的可选 kind 过滤器，例如 `quickfix` 或 `refactor.extract`
@@ -255,7 +255,7 @@ enum LspOperation {
     WorkspaceDiagnostics,
     CodeActions,
     CodeActionPreview,
-    FileQuickfixPreview,
+    FixDocumentPreview,
     CodeActionApply,
     PrepareRename,
     RenamePreview,
@@ -281,7 +281,7 @@ impl LspOperation {
             Self::WorkspaceDiagnostics => "workspace_diagnostics",
             Self::CodeActions => "code_actions",
             Self::CodeActionPreview => "code_action_preview",
-            Self::FileQuickfixPreview => "file_quickfix_preview",
+            Self::FixDocumentPreview => "fix_document_preview",
             Self::CodeActionApply => "code_action_apply",
             Self::PrepareRename => "prepare_rename",
             Self::RenamePreview => "rename_preview",

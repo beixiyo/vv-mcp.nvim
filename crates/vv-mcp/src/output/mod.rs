@@ -28,7 +28,7 @@ impl OutputConfig {
         match operation {
             "code_actions"
             | "code_action_preview"
-            | "file_quickfix_preview"
+            | "fix_document_preview"
             | "code_action_apply" => {
                 code_actions::format(operation, raw, self.max_results, self.format)
             }
@@ -390,5 +390,32 @@ mod tests {
             output["truncated"],
             serde_json::json!({ "shown": 1, "total": 2 })
         );
+    }
+
+    #[test]
+    fn formats_fix_document_preview_as_distinct_operation() {
+        let raw = serde_json::json!({
+          "actionId": "fix-1",
+          "clients": ["tsgo", "tailwindcss"],
+          "actionsCount": 3,
+          "filesChanged": 1,
+          "editsCount": 3,
+          "expiresAt": 123,
+          "changes": {
+            "/code/app.tsx": [
+              { "start": { "line": 1, "character": 2 }, "end": { "line": 1, "character": 4 } },
+              { "start": { "line": 3, "character": 2 }, "end": { "line": 3, "character": 4 } },
+              { "start": { "line": 5, "character": 2 }, "end": { "line": 5, "character": 4 } }
+            ]
+          }
+        });
+        let output = OutputConfig {
+            format: OutputFormat::Markdown,
+            max_results: 2,
+        }
+        .format_lsp("fix_document_preview", raw);
+
+        assert!(output.starts_with("## Fix Document Preview"));
+        assert!(output.contains("Showing 2 of 3 edits"));
     }
 }
