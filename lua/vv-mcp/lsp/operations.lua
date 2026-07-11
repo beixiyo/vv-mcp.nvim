@@ -7,7 +7,7 @@ local M = {}
 ---@field method string 对应的 LSP method 或 Neovim 内部诊断方法
 ---@field requires_position boolean 是否要求 1-based 的 line 与 character
 ---@field scope 'document'|'workspace' 请求作用域
----@field handler 'navigation'|'intelligence'|'symbols'|'diagnostics'|'highlights'|'rename'|'code_actions' 处理模块
+---@field handler 'navigation'|'intelligence'|'document_features'|'symbols'|'diagnostics'|'highlights'|'rename'|'code_actions' 处理模块
 ---@field requires_query? boolean 是否要求符号搜索词
 ---@field requires_new_name? boolean 是否要求新符号名
 ---@field requires_rename_id? boolean 是否要求重命名事务 ID
@@ -70,6 +70,20 @@ local operations = {
     requires_position = true,
     scope = 'document',
     handler = 'intelligence',
+  },
+  document_links = {
+    name = 'document_links',
+    method = 'textDocument/documentLink',
+    requires_position = false,
+    scope = 'document',
+    handler = 'document_features',
+  },
+  inlay_hints = {
+    name = 'inlay_hints',
+    method = 'textDocument/inlayHint',
+    requires_position = false,
+    scope = 'document',
+    handler = 'document_features',
   },
   document_symbols = {
     name = 'document_symbols',

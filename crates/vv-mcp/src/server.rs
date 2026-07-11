@@ -87,6 +87,8 @@ No position required:
 - workspace_symbols: search project symbols; requires query.
 - diagnostics: diagnostics for one file.
 - workspace_diagnostics: diagnostics under a workspace path.
+- document_links: navigable targets in one document.
+- inlay_hints: inferred types and parameter-name hints; optionally accepts startLine and endLine.
 
 Symbol position required:
 - hover: signature and documentation.
@@ -200,23 +202,38 @@ struct LspParams {
     /// 原生 Unix 或 Windows 绝对路径；推荐普通路径，同时兼容 file URI
     uri: String,
     /// 从 1 开始的行号；仅位置操作需要，优先复用符号查询返回的 range 起点
+    #[serde(skip_serializing_if = "Option::is_none")]
     line: Option<u32>,
     /// 从 1 开始的列号；`signature_help` 必须传入目标调用参数内部的位置
+    #[serde(skip_serializing_if = "Option::is_none")]
     character: Option<u32>,
     /// `list_instances` 返回的实例 ID；通常省略并按 uri 自动路由，实例重叠时用于消歧
+    #[serde(skip_serializing_if = "Option::is_none")]
     instance_id: Option<String>,
     /// 非空符号搜索词，仅 `workspace_symbols` 需要
+    #[serde(skip_serializing_if = "Option::is_none")]
     query: Option<String>,
     /// 新符号名，仅 `rename_preview` 需要
+    #[serde(skip_serializing_if = "Option::is_none")]
     new_name: Option<String>,
     /// `rename_preview` 返回的事务 ID，仅 `rename_apply` 需要
+    #[serde(skip_serializing_if = "Option::is_none")]
     rename_id: Option<String>,
     /// Code Action ID；候选动作必须先预览，全文件 Quick Fix 返回的 ID 已完成预览
+    #[serde(skip_serializing_if = "Option::is_none")]
     action_id: Option<String>,
     /// `code_actions` 的可选 kind 过滤器，例如 `quickfix` 或 `refactor.extract`
+    #[serde(skip_serializing_if = "Option::is_none")]
     action_kind: Option<String>,
     /// Neovim 侧可选超时时间，用于响应较慢的语言服务器
+    #[serde(skip_serializing_if = "Option::is_none")]
     timeout_ms: Option<u32>,
+    /// `inlay_hints` 的可选起始行，从 1 开始；省略时从文件首行开始
+    #[serde(skip_serializing_if = "Option::is_none")]
+    start_line: Option<u32>,
+    /// `inlay_hints` 的可选结束行，从 1 开始且包含该行；省略时读取整个文件
+    #[serde(skip_serializing_if = "Option::is_none")]
+    end_line: Option<u32>,
 }
 
 #[derive(Debug, Deserialize, Serialize, schemars::JsonSchema)]
@@ -230,6 +247,8 @@ enum LspOperation {
     DocumentHighlight,
     Hover,
     SignatureHelp,
+    DocumentLinks,
+    InlayHints,
     DocumentSymbols,
     WorkspaceSymbols,
     Diagnostics,
@@ -254,6 +273,8 @@ impl LspOperation {
             Self::DocumentHighlight => "document_highlight",
             Self::Hover => "hover",
             Self::SignatureHelp => "signature_help",
+            Self::DocumentLinks => "document_links",
+            Self::InlayHints => "inlay_hints",
             Self::DocumentSymbols => "document_symbols",
             Self::WorkspaceSymbols => "workspace_symbols",
             Self::Diagnostics => "diagnostics",
@@ -288,5 +309,33 @@ mod tests {
     fn rpc_timeout_exceeds_inner_lsp_timeout() {
         assert_eq!(rpc_timeout(None), Duration::from_millis(4000));
         assert_eq!(rpc_timeout(Some(7500)), Duration::from_millis(8500));
+    }
+
+    #[test]
+    fn omits_absent_optional_lsp_params() {
+        let params = LspParams {
+            operation: LspOperation::InlayHints,
+            uri: "/code/file.ts".into(),
+            line: None,
+            character: None,
+            instance_id: None,
+            query: None,
+            new_name: None,
+            rename_id: None,
+            action_id: None,
+            action_kind: None,
+            timeout_ms: None,
+            start_line: None,
+            end_line: None,
+        };
+        let value = serde_json::to_value(params).unwrap();
+
+        assert_eq!(
+            value,
+            serde_json::json!({
+                "operation": "inlay_hints",
+                "uri": "/code/file.ts"
+            })
+        );
     }
 }

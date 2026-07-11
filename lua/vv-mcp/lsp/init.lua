@@ -2,6 +2,7 @@
 local Context = require('vv-mcp.lsp.context')
 local CodeActions = require('vv-mcp.lsp.code_actions')
 local Diagnostics = require('vv-mcp.lsp.diagnostics')
+local DocumentFeatures = require('vv-mcp.lsp.document_features')
 local Intelligence = require('vv-mcp.lsp.intelligence')
 local Highlights = require('vv-mcp.lsp.highlights')
 local Navigation = require('vv-mcp.lsp.navigation')
@@ -31,6 +32,7 @@ function M.request(params)
   local handlers = {
     navigation = Navigation,
     intelligence = Intelligence,
+    document_features = DocumentFeatures,
     highlights = Highlights,
     symbols = Symbols,
     diagnostics = Diagnostics,

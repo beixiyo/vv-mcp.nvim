@@ -62,6 +62,17 @@ function M.create(params, operation)
   if operation.requires_action_id and (type(params.actionId) ~= 'string' or params.actionId == '') then
     return nil, { code = 'invalid_action_id', message = 'actionId is required for ' .. operation.name }
   end
+  if operation.name == 'inlay_hints' then
+    if params.startLine ~= nil and (type(params.startLine) ~= 'number' or params.startLine < 1) then
+      return nil, { code = 'invalid_range', message = 'startLine must be a 1-based positive integer' }
+    end
+    if params.endLine ~= nil and (type(params.endLine) ~= 'number' or params.endLine < 1) then
+      return nil, { code = 'invalid_range', message = 'endLine must be a 1-based positive integer' }
+    end
+    if params.startLine and params.endLine and params.startLine > params.endLine then
+      return nil, { code = 'invalid_range', message = 'startLine must not exceed endLine' }
+    end
+  end
 
   local path = Normalize.input_path(params.uri)
   local timeout_ms = type(params.timeoutMs) == 'number' and params.timeoutMs or 3000

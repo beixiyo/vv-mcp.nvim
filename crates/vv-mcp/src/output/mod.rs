@@ -3,6 +3,7 @@
 mod code_actions;
 mod config;
 mod diagnostics;
+mod document_features;
 mod documentation;
 mod highlights;
 mod locations;
@@ -40,6 +41,9 @@ impl OutputConfig {
             }
             "hover" | "signature_help" => {
                 documentation::format(operation, raw, self.max_results, self.format)
+            }
+            "document_links" | "inlay_hints" => {
+                document_features::format(operation, raw, self.max_results, self.format)
             }
             "document_symbols" | "workspace_symbols" => {
                 symbols::format(operation, raw, self.max_results, self.format)
@@ -110,6 +114,61 @@ mod tests {
         assert!(output.contains("Clients: `tsgo`"));
         assert!(output.contains("`/code/a.ts`: 1:2-1:8, 3:4-3:9"));
         assert!(output.contains("Showing 2 of 3 results"));
+    }
+
+    #[test]
+    fn compacts_and_caps_document_links() {
+        let raw = serde_json::json!({
+          "results": [{
+            "client": "marksman",
+            "result": [
+              { "range": { "start": { "line": 2, "character": 3 }, "end": { "line": 2, "character": 8 } }, "target": "https://example.com/a" },
+              { "range": { "start": { "line": 4, "character": 1 }, "end": { "line": 4, "character": 6 } }, "target": "https://example.com/b" }
+            ]
+          }]
+        });
+        let output = OutputConfig {
+            format: OutputFormat::Json,
+            max_results: 1,
+        }
+        .format_lsp("document_links", raw);
+        let output: Value = serde_json::from_str(&output).unwrap();
+
+        assert_eq!(output["clients"], serde_json::json!(["marksman"]));
+        assert_eq!(output["document_links"][0]["range"], "2:3-2:8");
+        assert_eq!(
+            output["truncated"],
+            serde_json::json!({ "shown": 1, "total": 2 })
+        );
+    }
+
+    #[test]
+    fn compacts_inlay_hint_labels_and_kinds() {
+        let raw = serde_json::json!({
+          "results": [{
+            "client": "tsgo",
+            "result": [{
+              "position": { "line": 9, "character": 12 },
+              "label": [{ "value": "name" }, { "value": ":" }],
+              "kind": 2,
+              "tooltip": { "kind": "markdown", "value": "Parameter name" },
+              "paddingLeft": true,
+              "textEdits": [{ "newText": "ignored" }]
+            }]
+          }]
+        });
+        let output = OutputConfig {
+            format: OutputFormat::Json,
+            max_results: 10,
+        }
+        .format_lsp("inlay_hints", raw);
+        let output: Value = serde_json::from_str(&output).unwrap();
+
+        assert_eq!(output["clients"], serde_json::json!(["tsgo"]));
+        assert_eq!(output["inlay_hints"][0]["position"], "9:12");
+        assert_eq!(output["inlay_hints"][0]["label"], "name:");
+        assert_eq!(output["inlay_hints"][0]["kind"], "parameter");
+        assert!(output["inlay_hints"][0].get("textEdits").is_none());
     }
 
     #[test]
