@@ -13,6 +13,7 @@ local M = {}
 ---@field requires_rename_id? boolean 是否要求重命名事务 ID
 ---@field requires_action_id? boolean 是否要求 Code Action 事务 ID
 ---@field requires_call_id? boolean 是否要求调用层级节点 ID
+---@field sync_from_disk? boolean 是否在请求前安全同步外部磁盘改动
 
 ---@type table<string, VVMcpLspOperation>
 local operations = {
@@ -157,6 +158,14 @@ local operations = {
     name = 'fix_document_preview',
     method = 'textDocument/codeAction',
     requires_position = false,
+    scope = 'document',
+    handler = 'code_actions',
+  },
+  fix_document = {
+    name = 'fix_document',
+    method = 'textDocument/codeAction',
+    requires_position = false,
+    sync_from_disk = true,
     scope = 'document',
     handler = 'code_actions',
   },

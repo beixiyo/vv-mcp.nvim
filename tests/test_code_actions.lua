@@ -11,13 +11,15 @@ Fs.mkdir_p(tmp)
 Fs.write_all(path, original .. '\n')
 local bufnr = vim.fn.bufadd(path)
 vim.fn.bufload(bufnr)
+local request_log = {}
 
 local client = {
   id = 901,
   name = 'fixture-lsp',
   offset_encoding = 'utf-16',
   supports_method = function() return true end,
-  request_sync = function()
+  request_sync = function(_, _, params)
+    request_log[#request_log + 1] = vim.deepcopy(params)
     return {
       result = {
         {
@@ -79,6 +81,28 @@ local stale_preview = CodeActions.request(context({ actionId = second_id }), {
 })
 assert(stale_preview.error.code == 'workspace_edit_stale', 'old sibling actions must become stale')
 assert(Fs.read_all(path) == 'rounded-lg p-[16px]\n', 'stale action must not corrupt the file')
+
+vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, { original })
+vim.api.nvim_buf_call(bufnr, function() vim.cmd('silent write') end)
+local fixed = CodeActions.request(context({}), {
+  name = 'fix_document',
+  method = 'textDocument/codeAction',
+})
+assert(fixed.changed == true and fixed.saved == true, vim.inspect(fixed))
+assert(fixed.editsCount == 2, 'direct document fix should apply both non-overlapping edits')
+assert(Fs.read_all(path) == 'rounded-lg p-4\n', 'direct document fix should save all edits')
+
+vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, { original })
+vim.api.nvim_buf_call(bufnr, function() vim.cmd('silent write') end)
+request_log = {}
+local line_fixed = CodeActions.request(context({ line = 1, character = 1 }), {
+  name = 'fix_document',
+  method = 'textDocument/codeAction',
+})
+assert(line_fixed.changed == true, vim.inspect(line_fixed))
+assert(vim.iter(request_log):all(function(params)
+  return not vim.tbl_contains(params.context.only or {}, 'source.fixAll')
+end), 'line fixes must not request document-wide source.fixAll actions')
 
 vim.lsp.get_client_by_id = original_get_client
 Fs.delete(tmp)

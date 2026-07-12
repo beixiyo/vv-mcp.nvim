@@ -45,6 +45,27 @@ local function wait_for_clients(bufnr, timeout_ms, method)
   return clients
 end
 
+local function sync_from_disk(bufnr, path)
+  if vim.bo[bufnr].modified then
+    return false, {
+      code = 'buffer_modified',
+      message = 'Refusing to replace unsaved buffer changes before automatic LSP fixes',
+      path = Normalize.wire_path(path),
+    }
+  end
+  local ok, error = pcall(vim.api.nvim_buf_call, bufnr, function()
+    vim.cmd('silent checktime')
+  end)
+  if not ok then
+    return false, {
+      code = 'buffer_sync_failed',
+      message = tostring(error),
+      path = Normalize.wire_path(path),
+    }
+  end
+  return true
+end
+
 ---校验操作参数并创建统一请求上下文
 ---@param params table MCP 入参
 ---@param operation VVMcpLspOperation 操作定义
@@ -107,6 +128,10 @@ function M.create(params, operation)
       end
       bufnr = vim.fn.bufadd(path)
       vim.fn.bufload(bufnr)
+    end
+    if operation.sync_from_disk then
+      local synced, sync_error = sync_from_disk(bufnr, path)
+      if not synced then return nil, sync_error end
     end
     clients = (operation.handler == 'diagnostics' or operation.name == 'rename_apply')
         and vim.lsp.get_clients({ bufnr = bufnr })

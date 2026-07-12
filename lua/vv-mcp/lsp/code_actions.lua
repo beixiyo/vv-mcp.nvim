@@ -52,19 +52,25 @@ local function diagnostic_params(context, diagnostic)
   }
 end
 
-local function client_diagnostics(context, client)
+local function client_diagnostics(context, client, line)
   local diagnostics = {}
   local seen = {}
   local marker = ('lsp.%s.%d'):format(client.name, client.id)
   local namespaces = {
     [vim.lsp.diagnostic.get_namespace(client.id)] = true,
   }
+
   for name, namespace in pairs(vim.api.nvim_get_namespaces()) do
     if name:find(marker, 1, true) then namespaces[namespace] = true end
   end
+
   for namespace in pairs(namespaces) do
-    for _, diagnostic in ipairs(vim.diagnostic.get(context.bufnr, { namespace = namespace })) do
+    local options = { namespace = namespace }
+    if type(line) == 'number' then options.lnum = line end
+
+    for _, diagnostic in ipairs(vim.diagnostic.get(context.bufnr, options)) do
       local lsp_diagnostic = diagnostic.user_data and diagnostic.user_data.lsp
+
       if lsp_diagnostic then
         local fingerprint = vim.fn.sha256(vim.json.encode(lsp_diagnostic))
         if not seen[fingerprint] then
@@ -83,12 +89,14 @@ local function request_params(context, whole_file)
     line = type(context.params.line) == 'number' and context.params.line - 1 or 0,
     character = type(context.params.character) == 'number' and context.params.character - 1 or 0,
   }
+
   return {
     textDocument = { uri = vim.uri_from_bufnr(context.bufnr) },
     range = whole_file and {
       start = { line = 0, character = 0 },
       ['end'] = { line = last_line, character = 0 },
     } or { start = position, ['end'] = position },
+
     context = {
       diagnostics = lsp_diagnostics(context.bufnr, whole_file and nil or position.line),
       only = whole_file and { 'quickfix' }
@@ -111,10 +119,12 @@ local function resolve_action(transaction, context)
       message = action.disabled.reason or 'Code action is disabled',
     }
   end
+
   local client = vim.lsp.get_client_by_id(transaction.client_id)
   if not client then
     return nil, { code = 'code_action_client_gone', message = 'The LSP client is no longer active' }
   end
+
   if not action.edit and action.data and client:supports_method('codeAction/resolve', context.bufnr) then
     local response, error = client:request_sync(
       'codeAction/resolve', action, context.timeout_ms, context.bufnr
@@ -124,12 +134,14 @@ local function resolve_action(transaction, context)
     end
     action = response and response.result or action
   end
+
   if action.command then
     return nil, {
       code = 'code_action_command_unsupported',
       message = 'Command-backed code actions are not supported yet',
     }
   end
+
   if not action.edit then
     return nil, { code = 'code_action_no_edit', message = 'Code action did not return a workspace edit' }
   end
@@ -141,24 +153,30 @@ local function list_actions(context, operation)
   local items = {}
   local errors = {}
   local params = request_params(context, false)
+
   for _, client in ipairs(context.clients) do
     if client:supports_method(operation.method, context.bufnr) then
       local response, error = client:request_sync(
         operation.method, params, context.timeout_ms, context.bufnr
       )
+
       if error then
         errors[client.name] = tostring(error)
       end
+
       for _, action in ipairs(response and response.result or {}) do
         local temporary = { action = action, client_id = client.id }
         local resolved, resolve_error = resolve_action(temporary, context)
+
         if resolved then
           local workspace, workspace_error = WorkspaceEdit.prepare({
             { edit = resolved.edit, encoding = client.offset_encoding or 'utf-16' },
           })
+
           if workspace and workspace.edits_count > 0 then
             local id = action_id(resolved.title or client.name)
             local expires_at = os.time() + ttl_seconds
+
             transactions[id] = {
               action = resolved,
               client_id = client.id,
@@ -182,6 +200,7 @@ local function list_actions(context, operation)
       end
     end
   end
+
   return {
     operation = operation.name,
     path = Normalize.wire_path(context.path),
@@ -194,14 +213,17 @@ local function preview(context)
   purge_expired()
   local id = context.params.actionId
   local transaction = transactions[id]
+
   if not transaction then
     return { error = { code = 'code_action_not_found', message = 'Code action not found or expired' } }
   end
+
   local fresh, stale_error = WorkspaceEdit.validate(transaction.workspace)
   if not fresh then
     transactions[id] = nil
     return { error = stale_error }
   end
+
   return {
     operation = 'code_action_preview',
     actionId = id,
@@ -224,14 +246,17 @@ local function document_fix_preview(context, operation)
   local function collect(client, params)
     local collected = 0
     local response = client:request_sync(operation.method, params, context.timeout_ms, context.bufnr)
+
     for _, action in ipairs(response and response.result or {}) do
       local temporary = { action = action, client_id = client.id }
       local resolved = resolve_action(temporary, context)
+
       if resolved and resolved.edit then
         local fingerprint = vim.fn.sha256(vim.json.encode({
           client = client.id,
           edit = resolved.edit,
         }))
+
         if not seen[fingerprint] then
           seen[fingerprint] = true
           edits[#edits + 1] = {
@@ -249,28 +274,35 @@ local function document_fix_preview(context, operation)
 
   for _, client in ipairs(context.clients) do
     if client:supports_method(operation.method, context.bufnr) then
-      local fix_all_count = operation.name == 'fix_document_preview'
+      local target_line = type(context.params.line) == 'number' and context.params.line - 1 or nil
+      local fix_all_count = target_line == nil
+          and (operation.name == 'fix_document_preview' or operation.name == 'fix_document')
           and collect(client, fix_all_params(context))
           or 0
+
       if fix_all_count == 0 then
-        collect(client, request_params(context, true))
-        for _, diagnostic in ipairs(client_diagnostics(context, client)) do
+        collect(client, request_params(context, target_line == nil))
+        for _, diagnostic in ipairs(client_diagnostics(context, client, target_line)) do
           collect(client, diagnostic_params(context, diagnostic))
         end
       end
     end
   end
+
   if #edits == 0 then
     return { error = { code = 'no_quickfixes', message = 'No editable quickfix actions found' } }
   end
+
   local workspace_transaction, error = WorkspaceEdit.prepare(edits)
   if not workspace_transaction then return { error = error } end
+
   local id = action_id(operation.name)
   local expires_at = os.time() + ttl_seconds
   transactions[id] = {
     workspace = workspace_transaction,
     expires_at = expires_at,
   }
+
   return {
     operation = operation.name,
     actionId = id,
@@ -288,10 +320,11 @@ local function document_fix_preview(context, operation)
   }
 end
 
-local function apply(context)
+local function apply(context, operation_name)
   purge_expired()
   local id = context.params.actionId
   local transaction = transactions[id]
+
   if not transaction or not transaction.workspace then
     return {
       error = {
@@ -300,17 +333,37 @@ local function apply(context)
       },
     }
   end
+
   local ok, error = WorkspaceEdit.apply(transaction.workspace)
   transactions[id] = nil
+
   if not ok then return { error = error } end
+
   return {
-    operation = 'code_action_apply',
+    operation = operation_name or 'code_action_apply',
     actionId = id,
     applied = true,
     saved = true,
     filesChanged = transaction.workspace.files_changed,
     editsCount = transaction.workspace.edits_count,
   }
+end
+
+local function fix_document(context, operation)
+  local preview = document_fix_preview(context, operation)
+  if preview.error then return preview end
+
+  local previous_id = context.params.actionId
+  context.params.actionId = preview.actionId
+  local result = apply(context, 'fix_document')
+  context.params.actionId = previous_id
+  if result.error then return result end
+
+  result.changed = true
+  result.clients = preview.clients
+  result.titles = preview.titles
+  result.actionsCount = preview.actionsCount
+  return result
 end
 
 ---执行 Code Action 操作并维护 preview -> apply 的事务约束
@@ -321,6 +374,7 @@ function M.request(context, operation)
   if operation.name == 'code_actions' then return list_actions(context, operation) end
   if operation.name == 'code_action_preview' then return preview(context) end
   if operation.name == 'fix_document_preview' then return document_fix_preview(context, operation) end
+  if operation.name == 'fix_document' then return fix_document(context, operation) end
   return apply(context)
 end
 

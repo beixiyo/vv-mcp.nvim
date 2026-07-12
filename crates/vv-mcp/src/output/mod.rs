@@ -33,6 +33,7 @@ impl OutputConfig {
             }
             "code_actions"
             | "code_action_preview"
+            | "fix_document"
             | "fix_document_preview"
             | "code_action_apply" => {
                 code_actions::format(operation, raw, self.max_results, self.format)
@@ -426,6 +427,27 @@ mod tests {
 
         assert!(output.starts_with("## Fix Document Preview"));
         assert!(output.contains("Showing 2 of 3 edits"));
+    }
+
+    #[test]
+    fn formats_direct_document_fix_without_transaction_id() {
+        let raw = serde_json::json!({
+          "operation": "fix_document",
+          "saved": true,
+          "filesChanged": 1,
+          "editsCount": 4,
+          "clients": ["tailwindcss", "tsgo"]
+        });
+        let output = OutputConfig {
+            format: OutputFormat::Markdown,
+            max_results: 2,
+        }
+        .format_lsp("fix_document", raw);
+
+        assert_eq!(
+            output,
+            "## Document Fixed\n- 1 files, 4 edits\n- Saved to disk: `true`"
+        );
     }
 
     #[test]

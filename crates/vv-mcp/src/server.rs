@@ -33,6 +33,24 @@ pub struct VvMcpServer {
 
 #[tool_router]
 impl VvMcpServer {
+    pub async fn fix_document(
+        &self,
+        uri: String,
+        instance_id: Option<String>,
+        timeout_ms: u32,
+        line: Option<u32>,
+    ) -> Result<Value, String> {
+        let mut params = LspParams::document(
+            LspOperation::FixDocument,
+            uri,
+            instance_id,
+            Some(timeout_ms),
+        );
+        params.line = line;
+        params.character = line.map(|_| 1);
+        self.run_lsp(&params).await
+    }
+
     pub fn new(registry: Option<PathBuf>, output: OutputConfig) -> Result<Self> {
         Ok(Self {
             registry: Registry::new(registry)?,
@@ -462,6 +480,39 @@ struct LspParams {
     path_pattern: Option<String>,
 }
 
+impl LspParams {
+    fn document(
+        operation: LspOperation,
+        uri: String,
+        instance_id: Option<String>,
+        timeout_ms: Option<u32>,
+    ) -> Self {
+        Self {
+            operation,
+            uri,
+            line: None,
+            character: None,
+            instance_id,
+            query: None,
+            symbol_kinds: None,
+            new_name: None,
+            rename_id: None,
+            action_id: None,
+            action_kind: None,
+            timeout_ms,
+            start_line: None,
+            end_line: None,
+            call_id: None,
+            include_declaration: None,
+            severities: None,
+            sources: None,
+            codes: None,
+            include_external: None,
+            path_pattern: None,
+        }
+    }
+}
+
 #[derive(Debug, Deserialize, Serialize, schemars::JsonSchema)]
 #[serde(rename_all = "lowercase")]
 enum DiagnosticSeverityFilter {
@@ -524,6 +575,7 @@ enum LspOperation {
     WorkspaceDiagnostics,
     CodeActions,
     CodeActionPreview,
+    FixDocument,
     FixDocumentPreview,
     CodeActionApply,
     PrepareRename,
@@ -553,6 +605,7 @@ impl LspOperation {
             Self::WorkspaceDiagnostics => "workspace_diagnostics",
             Self::CodeActions => "code_actions",
             Self::CodeActionPreview => "code_action_preview",
+            Self::FixDocument => "fix_document",
             Self::FixDocumentPreview => "fix_document_preview",
             Self::CodeActionApply => "code_action_apply",
             Self::PrepareRename => "prepare_rename",

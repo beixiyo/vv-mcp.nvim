@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Add `vv-mcp fix <path> [--line <number>]` for command-based hooks that apply and save safe LSP fixes
+
 ## 0.2.0
 
 - Add multi-instance Neovim routing with compact filtered LSP output

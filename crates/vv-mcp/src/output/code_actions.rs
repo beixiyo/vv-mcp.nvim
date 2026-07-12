@@ -17,7 +17,7 @@ pub(super) fn format(
         "code_action_preview" | "fix_document_preview" => {
             format_preview(operation, raw, max_results, format)
         }
-        "code_action_apply" => format_apply(raw, format),
+        "code_action_apply" | "fix_document" => format_apply(operation, raw, format),
         _ => String::new(),
     }
 }
@@ -138,9 +138,15 @@ fn format_preview(operation: &str, raw: Value, max_results: usize, format: Outpu
     }
 }
 
-fn format_apply(raw: Value, format: OutputFormat) -> String {
+fn format_apply(operation: &str, raw: Value, format: OutputFormat) -> String {
     match format {
         OutputFormat::Json => to_json(&raw),
+        OutputFormat::Markdown if operation == "fix_document" => format!(
+            "## Document Fixed\n- {} files, {} edits\n- Saved to disk: `{}`",
+            raw["filesChanged"],
+            raw["editsCount"],
+            raw["saved"].as_bool().unwrap_or(false)
+        ),
         OutputFormat::Markdown => format!(
             "## Code Action Applied\n- Action ID: `{}`\n- {} files, {} edits\n- Saved to disk: `{}`",
             raw["actionId"].as_str().unwrap_or_default(),

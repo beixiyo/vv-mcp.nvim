@@ -184,6 +184,14 @@ claude mcp add --scope user lsp-mcp -- vv-mcp
 
 修改 MCP 配置后重启客户端。请保持 Neovim 运行，以便保持项目实例可达
 
+对于能够执行命令的编辑器或 Agent Hook，无需 MCP 客户端即可自动应用可用的 LSP 修复：
+
+```bash
+vv-mcp fix /absolute/path/to/file.ts
+```
+
+传入 `--line <行号>` 时仅应用该 1-based 行关联的 Quick Fix。省略时，命令会按文件路径选择实例、同步外部磁盘改动、应用可编辑的 `source.fixAll` 或 Quick Fix 并保存。没有匹配实例、LSP 或修复项时正常退出；Neovim 中存在未保存修改或 WorkspaceEdit 不安全时会拒绝执行
+
 官方文档: [Codex](https://developers.openai.com/codex/mcp/), [Claude Code](https://docs.anthropic.com/en/docs/claude-code/mcp), [Cursor](https://docs.cursor.com/context/model-context-protocol), [Gemini CLI](https://geminicli.com/docs/tools/mcp-server/), [OpenCode](https://opencode.ai/docs/mcp-servers/)
 
 ## MCP 工具
@@ -206,7 +214,7 @@ claude mcp add --scope user lsp-mcp -- vv-mcp
 | 符号 | `document_symbols`, `workspace_symbols` |
 | 诊断 | `diagnostics`, `workspace_diagnostics` |
 | 调用关系 | `prepare_call_hierarchy`, `incoming_calls`, `outgoing_calls` |
-| 代码修复 | `code_actions`, `code_action_preview`, `fix_document_preview`, `code_action_apply` |
+| 代码修复 | `code_actions`, `code_action_preview`, `fix_document_preview`, `fix_document`, `code_action_apply` |
 | 重命名 | `prepare_rename`, `rename_preview`, `rename_apply` |
 
 ## 常见流程

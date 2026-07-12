@@ -182,6 +182,14 @@ claude mcp add --scope user lsp-mcp -- vv-mcp
 
 Restart the MCP client after changing its configuration. Keep Neovim running so the project instance remains available
 
+For editor and agent hooks that can run commands, apply available LSP fixes without an MCP client:
+
+```bash
+vv-mcp fix /absolute/path/to/file.ts
+```
+
+Pass `--line <number>` to apply only Quick Fixes associated with one 1-based line. Without it, the command routes by file path, synchronizes external disk changes, applies editable `source.fixAll` or quick-fix actions, and saves the result. No matching instance, LSP, or fix is a successful no-op. Unsaved Neovim buffers and unsafe workspace edits are rejected
+
 Official MCP setup documentation: [Codex](https://developers.openai.com/codex/mcp/), [Claude Code](https://docs.anthropic.com/en/docs/claude-code/mcp), [Cursor](https://docs.cursor.com/context/model-context-protocol), [Gemini CLI](https://geminicli.com/docs/tools/mcp-server/), [OpenCode](https://opencode.ai/docs/mcp-servers/)
 
 ## MCP tools
@@ -204,7 +212,7 @@ Official MCP setup documentation: [Codex](https://developers.openai.com/codex/mc
 | Symbols | `document_symbols`, `workspace_symbols` |
 | Diagnostics | `diagnostics`, `workspace_diagnostics` |
 | Call hierarchy | `prepare_call_hierarchy`, `incoming_calls`, `outgoing_calls` |
-| Code Actions | `code_actions`, `code_action_preview`, `fix_document_preview`, `code_action_apply` |
+| Code Actions | `code_actions`, `code_action_preview`, `fix_document_preview`, `fix_document`, `code_action_apply` |
 | Rename | `prepare_rename`, `rename_preview`, `rename_apply` |
 
 ## Common workflows
