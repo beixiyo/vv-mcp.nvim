@@ -23,6 +23,8 @@ local client = {
   initialized = true,
   offset_encoding = 'utf-16',
   server_capabilities = {},
+  -- Neovim 内部的 vim.lsp._capability.is_enabled 会索引该字段；真实 client 一定有，替身也必须有
+  _enabled_capabilities = {},
   stop = function() end,
   supports_method = function() return true end,
   request_sync = function(_, _, params)
