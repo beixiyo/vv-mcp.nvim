@@ -1,5 +1,6 @@
 ---负责校验 MCP 入参、加载目标 buffer，并发现能够响应请求的 LSP 客户端
 local Normalize = require('vv-mcp.lsp.normalize')
+local Fix = require('vv-utils.lsp.fix')
 
 local M = {}
 
@@ -15,6 +16,12 @@ local function loaded_buffer(path)
   end
 end
 
+local function delete_temporary_buffer(bufnr)
+  if not bufnr or not vim.api.nvim_buf_is_valid(bufnr) then return end
+  if vim.bo[bufnr].modified or #vim.fn.win_findbuf(bufnr) > 0 then return end
+  pcall(vim.api.nvim_buf_delete, bufnr, { force = true })
+end
+
 ---一次 LSP 操作共享的运行上下文
 ---@class VVMcpLspContext
 ---@field params table 原始 MCP 入参
@@ -22,28 +29,8 @@ end
 ---@field bufnr integer? 文档级操作对应的 buffer，工作区操作为空
 ---@field timeout_ms integer 单个 LSP 同步请求的超时时间
 ---@field clients vim.lsp.Client[] 当前作用域内可用的客户端
-
----等待目标 buffer attach 至少一个支持指定方法的客户端
----@param bufnr integer buffer ID
----@param timeout_ms integer 最长等待时间
----@param method string LSP method
----@return vim.lsp.Client[] clients 返回当前 attach 的全部客户端，由处理器继续筛选能力
-local function wait_for_clients(bufnr, timeout_ms, method)
-  local clients = vim.lsp.get_clients({ bufnr = bufnr })
-  local function has_supporting_client()
-    return vim.iter(clients):any(function(client)
-      return client:supports_method(method, bufnr)
-    end)
-  end
-  if has_supporting_client() then return clients end
-
-  vim.wait(timeout_ms, function()
-    clients = vim.lsp.get_clients({ bufnr = bufnr })
-    return has_supporting_client()
-  end, 20)
-
-  return clients
-end
+---@field pending_clients string[] 超时后仍未完成初始化、本次拿不到其修复项的客户端
+---@field temporary boolean 是否由本次请求临时创建文档 buffer
 
 local function sync_from_disk(bufnr, path)
   if vim.bo[bufnr].modified then
@@ -112,8 +99,18 @@ function M.create(params, operation)
 
   local path = Normalize.input_path(params.uri)
   local timeout_ms = type(params.timeoutMs) == 'number' and params.timeoutMs or 3000
+  local attached_only = operation.handler == 'diagnostics' or operation.name == 'rename_apply'
   local bufnr
   local clients
+  local pending = {}
+  local temporary = false
+
+  ---失败时不要留下本次请求临时创建的 buffer
+  local function fail(error)
+    if temporary then delete_temporary_buffer(bufnr) end
+    return nil, error
+  end
+
   if operation.scope == 'workspace' then
     clients = vim.lsp.get_clients()
   else
@@ -126,23 +123,38 @@ function M.create(params, operation)
           path = Normalize.wire_path(path),
         }
       end
+      if not Fix.supports_path(path) then
+        return nil, {
+          code = 'no_lsp',
+          message = 'No enabled LSP configuration matches the document filetype',
+          path = Normalize.wire_path(path),
+        }
+      end
       bufnr = vim.fn.bufadd(path)
       vim.fn.bufload(bufnr)
+      temporary = true
     end
     if operation.sync_from_disk then
       local synced, sync_error = sync_from_disk(bufnr, path)
-      if not synced then return nil, sync_error end
+      if not synced then return fail(sync_error) end
     end
-    clients = (operation.handler == 'diagnostics' or operation.name == 'rename_apply')
-        and vim.lsp.get_clients({ bufnr = bufnr })
-        or wait_for_clients(bufnr, timeout_ms, operation.method)
+    if attached_only then
+      clients = vim.lsp.get_clients({ bufnr = bufnr })
+    else
+      clients, pending = Fix.wait_for_clients(bufnr, {
+        timeout_ms = timeout_ms,
+        method = operation.method,
+        wait_all = operation.wait_all_clients == true,
+        allow_late_attach = temporary,
+      })
+    end
   end
-  if #clients == 0 and operation.handler ~= 'diagnostics' and operation.name ~= 'rename_apply' then
-    return nil, {
+  if #clients == 0 and not attached_only then
+    return fail({
       code = 'no_lsp',
       message = 'No LSP client attached to buffer',
       path = Normalize.wire_path(path),
-    }
+    })
   end
 
   return {
@@ -151,7 +163,15 @@ function M.create(params, operation)
     bufnr = bufnr,
     timeout_ms = timeout_ms,
     clients = clients,
+    pending_clients = pending,
+    temporary = temporary,
   }
+end
+
+---清理由一次 CLI 请求临时创建且已经安全落盘的主文档 buffer
+---@param context VVMcpLspContext
+function M.cleanup(context)
+  if context.temporary then delete_temporary_buffer(context.bufnr) end
 end
 
 return M

@@ -12,6 +12,8 @@ Fs.write_all(path, original .. '\n')
 local bufnr = vim.fn.bufadd(path)
 vim.fn.bufload(bufnr)
 local request_log = {}
+local delay_padding = false
+local delayed_requests = 0
 
 local client = {
   id = 901,
@@ -20,25 +22,29 @@ local client = {
   supports_method = function() return true end,
   request_sync = function(_, _, params)
     request_log[#request_log + 1] = vim.deepcopy(params)
-    return {
-      result = {
-        {
-          title = 'Fix rounded',
-          kind = 'quickfix',
-          edit = { changes = { [vim.uri_from_fname(path)] = {{
-            range = { start = { line = 0, character = 0 }, ['end'] = { line = 0, character = 13 } },
-            newText = 'rounded-lg',
-          }} } },
-        },
-        {
-          title = 'Fix padding',
-          kind = 'quickfix',
-          edit = { changes = { [vim.uri_from_fname(path)] = {{
-            range = { start = { line = 0, character = 14 }, ['end'] = { line = 0, character = 22 } },
-            newText = 'p-4',
-          }} } },
-        },
+    if delay_padding then delayed_requests = delayed_requests + 1 end
+    local actions = {
+      {
+        title = 'Fix rounded',
+        kind = 'quickfix',
+        edit = { changes = { [vim.uri_from_fname(path)] = {{
+          range = { start = { line = 0, character = 0 }, ['end'] = { line = 0, character = 13 } },
+          newText = 'rounded-lg',
+        }} } },
       },
+    }
+    if not delay_padding or delayed_requests >= 2 then
+      actions[#actions + 1] = {
+        title = 'Fix padding',
+        kind = 'quickfix',
+        edit = { changes = { [vim.uri_from_fname(path)] = {{
+          range = { start = { line = 0, character = 14 }, ['end'] = { line = 0, character = 22 } },
+          newText = 'p-4',
+        }} } },
+      }
+    end
+    return {
+      result = actions,
     }
   end,
 }
@@ -55,7 +61,7 @@ local function context(params)
     params = params,
     path = path,
     bufnr = bufnr,
-    timeout_ms = 1000,
+    timeout_ms = 2000,
     clients = { client },
   }
 end
@@ -86,16 +92,20 @@ assert(Fs.read_all(path) == 'rounded-lg p-[16px]\n', 'stale action must not corr
 
 vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, { original })
 vim.api.nvim_buf_call(bufnr, function() vim.cmd('silent write') end)
+delay_padding = true
+delayed_requests = 0
 local fixed = CodeActions.request(context({}), {
   name = 'fix_document',
   method = 'textDocument/codeAction',
 })
 assert(fixed.changed == true and fixed.saved == true, vim.inspect(fixed))
 assert(fixed.editsCount == 2, 'direct document fix should apply both non-overlapping edits')
+assert(delayed_requests >= 2, 'document fix must resample delayed code actions')
 assert(Fs.read_all(path) == 'rounded-lg p-4\n', 'direct document fix should save all edits')
 
 vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, { original })
 vim.api.nvim_buf_call(bufnr, function() vim.cmd('silent write') end)
+delay_padding = false
 request_log = {}
 local line_fixed = CodeActions.request(context({ line = 1, character = 1 }), {
   name = 'fix_document',
@@ -105,6 +115,14 @@ assert(line_fixed.changed == true, vim.inspect(line_fixed))
 assert(vim.iter(request_log):all(function(params)
   return not vim.tbl_contains(params.context.only or {}, 'source.fixAll')
 end), 'line fixes must not request document-wide source.fixAll actions')
+
+local pending = context({})
+pending.pending_clients = { 'slow-lsp' }
+local blocked = CodeActions.request(pending, {
+  name = 'fix_document',
+  method = 'textDocument/codeAction',
+})
+assert(blocked.error.code == 'lsp_initialization_timeout', vim.inspect(blocked))
 
 vim.lsp.get_client_by_id = original_get_client
 vim.lsp.get_clients = original_get_clients

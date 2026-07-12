@@ -5,9 +5,13 @@ mod nvim;
 mod output;
 mod server;
 
-use std::path::PathBuf;
+use std::{
+    collections::BTreeSet,
+    path::{Path, PathBuf},
+};
 
 use clap::{Parser, Subcommand};
+use ignore::WalkBuilder;
 use output::{OutputConfig, OutputFormat};
 use rmcp::{ServiceExt, transport::stdio};
 use serde_json::{Value, json};
@@ -57,8 +61,12 @@ enum Command {
         timeout_ms: u32,
 
         /// 仅修复指定的 1-based 行；省略时修复整个文件
-        #[arg(long, value_parser = parse_line)]
+        #[arg(long, value_parser = parse_line, conflicts_with = "all")]
         line: Option<u32>,
+
+        /// 串行修复目录下所有未被 ignore 规则排除的文件
+        #[arg(long)]
+        all: bool,
     },
 }
 
@@ -98,9 +106,27 @@ async fn main() -> anyhow::Result<()> {
         instance_id,
         timeout_ms,
         line,
+        all,
     }) = args.command
     {
         let path = absolute_path(path)?;
+        if path.is_dir() {
+            if !all {
+                anyhow::bail!("directory paths require --all");
+            }
+            let result = fix_directory(&server, &path, instance_id, timeout_ms).await?;
+            println!("{result}");
+            return Ok(());
+        }
+        if all {
+            anyhow::bail!("--all requires a directory path");
+        }
+        if !path.is_file() {
+            anyhow::bail!(
+                "path does not exist or is not a regular file: {}",
+                path.display()
+            );
+        }
         let uri = path.to_string_lossy().into_owned();
         match server
             .fix_document(uri.clone(), instance_id, timeout_ms, line)
@@ -135,6 +161,89 @@ async fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
+async fn fix_directory(
+    server: &VvMcpServer,
+    root: &Path,
+    instance_id: Option<String>,
+    timeout_ms: u32,
+) -> anyhow::Result<Value> {
+    let root_uri = root.to_string_lossy().into_owned();
+    let instance = server
+        .resolve_active_instance(&root_uri, instance_id.as_deref())
+        .await
+        .map_err(anyhow::Error::msg)?;
+    let files = workspace_files(root)?;
+    let mut changed_files = 0_u64;
+    let mut skipped_files = 0_u64;
+    let mut edits_count = 0_u64;
+    let mut clients = BTreeSet::new();
+    let mut pending_clients = BTreeSet::new();
+    let mut failures = Vec::new();
+
+    for path in &files {
+        let uri = path.to_string_lossy().into_owned();
+        match server
+            .fix_document_on_instance(&instance, uri.clone(), timeout_ms)
+            .await
+        {
+            Ok(result) if result.get("error").is_none() => {
+                changed_files += 1;
+                edits_count += result["editsCount"].as_u64().unwrap_or(0);
+                collect_names(&result["clients"], &mut clients);
+                collect_names(&result["pendingClients"], &mut pending_clients);
+            }
+            Ok(result) if is_unavailable(&result) => skipped_files += 1,
+            Ok(result) => failures.push(json!({
+                "path": uri,
+                "error": result.get("error").cloned().unwrap_or(result),
+            })),
+            Err(error) => anyhow::bail!(
+                "active Neovim instance request failed for {uri} ({}): {error}",
+                instance.instance_id
+            ),
+        }
+    }
+
+    Ok(json!({
+        "changed": changed_files > 0,
+        "root": root_uri,
+        "instanceId": instance.instance_id,
+        "scannedFiles": files.len(),
+        "changedFiles": changed_files,
+        "skippedFiles": skipped_files,
+        "failedFiles": failures.len(),
+        "editsCount": edits_count,
+        "clients": clients,
+        "pendingClients": pending_clients,
+        "failures": failures,
+    }))
+}
+
+/// 汇总一次结果里的客户端名，缺失或类型不符时视为空
+fn collect_names(value: &Value, into: &mut BTreeSet<String>) {
+    for name in value.as_array().into_iter().flatten() {
+        if let Some(name) = name.as_str() {
+            into.insert(name.to_owned());
+        }
+    }
+}
+
+fn workspace_files(root: &Path) -> anyhow::Result<Vec<PathBuf>> {
+    let mut files = Vec::new();
+    let mut builder = WalkBuilder::new(root);
+    builder
+        .standard_filters(true)
+        .follow_links(false)
+        .sort_by_file_path(|left, right| left.cmp(right));
+    for entry in builder.build() {
+        let entry = entry?;
+        if entry.file_type().is_some_and(|kind| kind.is_file()) {
+            files.push(entry.into_path());
+        }
+    }
+    Ok(files)
+}
+
 fn absolute_path(path: PathBuf) -> anyhow::Result<PathBuf> {
     if path.is_absolute() {
         Ok(path)
@@ -159,19 +268,28 @@ fn fix_skipped(path: &str, reason: &str) -> Value {
 }
 
 fn fix_success(result: Value) -> Value {
-    json!({
+    let mut success = json!({
         "changed": true,
         "saved": result["saved"],
         "filesChanged": result["filesChanged"],
         "editsCount": result["editsCount"],
         "clients": result["clients"],
         "titles": result["titles"],
-    })
+    });
+    // 仍在握手的客户端意味着它的修复项本次没拿到，不能让这点在「成功」里消失
+    if let Some(pending) = result.get("pendingClients") {
+        success["pendingClients"] = pending.clone();
+    }
+    success
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::{
+        fs,
+        time::{SystemTime, UNIX_EPOCH},
+    };
 
     #[test]
     fn rejects_zero_max_results() {
@@ -197,6 +315,7 @@ mod tests {
                 path,
                 timeout_ms: 7000,
                 line: Some(12),
+                all: false,
                 ..
             }) if path == std::path::Path::new("src/main.rs")
         ));
@@ -215,5 +334,32 @@ mod tests {
             fix_skipped("/code/a.ts", error_code(&result))["changed"],
             false
         );
+    }
+
+    #[test]
+    fn requires_all_for_directories() {
+        let args = Args::try_parse_from(["vv-mcp", "fix", ".", "--all"]).unwrap();
+        assert!(matches!(args.command, Some(Command::Fix { all: true, .. })));
+        assert!(Args::try_parse_from(["vv-mcp", "fix", ".", "--all", "--line", "1"]).is_err());
+    }
+
+    #[test]
+    fn walks_repository_files_in_order_and_respects_gitignore() {
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("vv-mcp-fix-all-{nonce}"));
+        fs::create_dir_all(root.join(".git")).unwrap();
+        fs::create_dir_all(root.join("src")).unwrap();
+        fs::create_dir_all(root.join("ignored")).unwrap();
+        fs::write(root.join(".gitignore"), "ignored/\n").unwrap();
+        fs::write(root.join("src/b.ts"), "export const b = 1\n").unwrap();
+        fs::write(root.join("src/a.ts"), "export const a = 1\n").unwrap();
+        fs::write(root.join("ignored/c.ts"), "export const c = 1\n").unwrap();
+
+        let files = workspace_files(&root).unwrap();
+        assert_eq!(files, vec![root.join("src/a.ts"), root.join("src/b.ts")]);
+        fs::remove_dir_all(root).unwrap();
     }
 }

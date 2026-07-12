@@ -1,6 +1,8 @@
 local Path = require('vv-utils.path')
 
 local M = {}
+--- 首次解析后固定，避免 LSP attach 改变探测到的根目录时实例身份漂移
+local pinned_project_id
 
 ---@param root string
 ---@return string
@@ -62,11 +64,12 @@ function M.current()
   local detected_root = Path.get_root() or cwd
   local root = vim.fs.normalize(vim.fn.fnamemodify(detected_root, ':p'))
   local pid = vim.fn.getpid()
-  local project_id = project_name(root) .. '-' .. vim.fn.sha256(root):sub(1, 8)
+  pinned_project_id = pinned_project_id
+      or (project_name(root) .. '-' .. vim.fn.sha256(root):sub(1, 8))
 
   return {
-    instanceId = project_id .. ':' .. pid,
-    projectId = project_id,
+    instanceId = pinned_project_id .. ':' .. pid,
+    projectId = pinned_project_id,
     pid = pid,
     socket = vim.v.servername,
     cwd = cwd,

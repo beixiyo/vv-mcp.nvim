@@ -40,15 +40,33 @@ impl VvMcpServer {
         timeout_ms: u32,
         line: Option<u32>,
     ) -> Result<Value, String> {
-        let mut params = LspParams::document(
-            LspOperation::FixDocument,
-            uri,
-            instance_id,
-            Some(timeout_ms),
-        );
-        params.line = line;
-        params.character = line.map(|_| 1);
+        let params = fix_params(uri, instance_id, timeout_ms, line);
         self.run_lsp(&params).await
+    }
+
+    /// 解析并固定 CLI 批处理使用的底层 Neovim 连接
+    pub async fn resolve_active_instance(
+        &self,
+        uri: &str,
+        instance_id: Option<&str>,
+    ) -> Result<Instance, String> {
+        let instances = self.instances().await.map_err(|error| error.to_string())?;
+        resolve_instance(&instances.instances, instance_id, Some(uri))
+            .cloned()
+            .map_err(|error| error.to_string())
+    }
+
+    /// 通过已经固定的 Neovim socket 修复文档，不在文件之间重新解析注册表
+    pub async fn fix_document_on_instance(
+        &self,
+        instance: &Instance,
+        uri: String,
+        timeout_ms: u32,
+    ) -> Result<Value, String> {
+        let params = fix_params(uri, Some(instance.instance_id.clone()), timeout_ms, None);
+        self.request_lsp(instance, &params)
+            .await
+            .map_err(|error| error.to_string())
     }
 
     pub fn new(registry: Option<PathBuf>, output: OutputConfig) -> Result<Self> {
@@ -221,14 +239,8 @@ impl VvMcpServer {
     }
 
     async fn select_instance(&self, params: &LspParams) -> Result<Instance, String> {
-        let instances = self.instances().await.map_err(|error| error.to_string())?;
-        resolve_instance(
-            &instances.instances,
-            params.instance_id.as_deref(),
-            Some(&params.uri),
-        )
-        .cloned()
-        .map_err(|error| error.to_string())
+        self.resolve_active_instance(&params.uri, params.instance_id.as_deref())
+            .await
     }
 
     async fn request_lsp(
@@ -478,6 +490,10 @@ struct LspParams {
     /// `references` 的可选路径子串筛选；使用普通 Unix 路径片段，不是 glob 或正则
     #[serde(skip_serializing_if = "Option::is_none")]
     path_pattern: Option<String>,
+    /// CLI 批处理结束后清理本次请求临时创建的 buffer，不暴露给 MCP schema
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[schemars(skip)]
+    cleanup_temporary: Option<bool>,
 }
 
 impl LspParams {
@@ -509,8 +525,28 @@ impl LspParams {
             codes: None,
             include_external: None,
             path_pattern: None,
+            cleanup_temporary: None,
         }
     }
+}
+
+/// 构造一次自动修复请求：可选行号，并让 Neovim 清理本次请求临时创建的 buffer
+fn fix_params(
+    uri: String,
+    instance_id: Option<String>,
+    timeout_ms: u32,
+    line: Option<u32>,
+) -> LspParams {
+    let mut params = LspParams::document(
+        LspOperation::FixDocument,
+        uri,
+        instance_id,
+        Some(timeout_ms),
+    );
+    params.line = line;
+    params.character = line.map(|_| 1);
+    params.cleanup_temporary = Some(true);
+    params
 }
 
 #[derive(Debug, Deserialize, Serialize, schemars::JsonSchema)]
@@ -660,6 +696,7 @@ mod tests {
             codes: None,
             include_external: None,
             path_pattern: None,
+            cleanup_temporary: None,
         };
         let value = serde_json::to_value(params).unwrap();
 

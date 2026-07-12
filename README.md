@@ -186,9 +186,12 @@ For editor and agent hooks that can run commands, apply available LSP fixes with
 
 ```bash
 vv-mcp fix /absolute/path/to/file.ts
+vv-mcp fix /absolute/path/to/project --all
 ```
 
 Pass `--line <number>` to apply only Quick Fixes associated with one 1-based line. Without it, the command routes by file path, synchronizes external disk changes, applies editable `source.fixAll` or quick-fix actions, and saves the result. No matching instance, LSP, or fix is a successful no-op. Unsaved Neovim buffers and unsafe workspace edits are rejected
+
+Pass `--all` with a directory to walk non-ignored files and fix them sequentially through one active Neovim instance. The instance is resolved once and pinned for the whole run; temporary buffers created for unopened files are removed after each request. Directory mode requires a running vv-mcp-enabled Neovim instance whose workspace contains the path
 
 Official MCP setup documentation: [Codex](https://developers.openai.com/codex/mcp/), [Claude Code](https://docs.anthropic.com/en/docs/claude-code/mcp), [Cursor](https://docs.cursor.com/context/model-context-protocol), [Gemini CLI](https://geminicli.com/docs/tools/mcp-server/), [OpenCode](https://opencode.ai/docs/mcp-servers/)
 

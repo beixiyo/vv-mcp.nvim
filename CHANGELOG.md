@@ -3,6 +3,8 @@
 ## Unreleased
 
 - Add `vv-mcp fix <path> [--line <number>]` for command-based hooks that apply and save safe LSP fixes
+- Add `vv-mcp fix <directory> --all` for sequential repository fixes through one pinned Neovim instance
+- Keep instance identity stable when LSP attachment changes the discovered project roots
 
 ## 0.2.0
 

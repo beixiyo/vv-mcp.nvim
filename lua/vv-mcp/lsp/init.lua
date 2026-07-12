@@ -27,8 +27,8 @@ function M.request(params)
     }
   end
 
-  local context, error = Context.create(params, operation)
-  if not context then return { error = error } end
+  local context, context_error = Context.create(params, operation)
+  if not context then return { error = context_error } end
 
   local handlers = {
     navigation = Navigation,
@@ -41,7 +41,10 @@ function M.request(params)
     rename = Rename,
     code_actions = CodeActions,
   }
-  return handlers[operation.handler].request(context, operation)
+  local ok, result = pcall(handlers[operation.handler].request, context, operation)
+  if params.cleanupTemporary then Context.cleanup(context) end
+  if not ok then error(result, 0) end
+  return result
 end
 
 return M

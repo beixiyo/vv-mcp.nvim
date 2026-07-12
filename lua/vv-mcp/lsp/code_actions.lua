@@ -1,6 +1,6 @@
 ---管理 Code Action 的查询、无副作用预览和单次安全应用事务
 local Normalize = require('vv-mcp.lsp.normalize')
-local SharedCodeActions = require('vv-utils.lsp.code_actions')
+local Fix = require('vv-utils.lsp.fix')
 local WorkspaceEdit = require('vv-utils.lsp.workspace_edit')
 
 local M = {}
@@ -183,7 +183,14 @@ end
 
 local function document_fix_preview(context, operation)
   purge_expired()
-  local collected, error = SharedCodeActions.collect_document_fixes({
+  if not vim.tbl_isempty(context.pending_clients or {}) then
+    return { error = {
+      code = 'lsp_initialization_timeout',
+      message = 'LSP clients did not finish initializing before the fix timeout',
+      pendingClients = context.pending_clients,
+    } }
+  end
+  local collected, error = Fix.collect({
     bufnr = context.bufnr,
     line = context.params.line,
     character = context.params.character,
@@ -231,6 +238,9 @@ local function apply(context, operation_name)
   transactions[id] = nil
 
   if not ok then return { error = error } end
+  if context.params.cleanupTemporary then
+    WorkspaceEdit.cleanup(transaction.workspace)
+  end
 
   return {
     operation = operation_name or 'code_action_apply',

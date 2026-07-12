@@ -188,9 +188,12 @@ claude mcp add --scope user lsp-mcp -- vv-mcp
 
 ```bash
 vv-mcp fix /absolute/path/to/file.ts
+vv-mcp fix /absolute/path/to/project --all
 ```
 
 传入 `--line <行号>` 时仅应用该 1-based 行关联的 Quick Fix。省略时，命令会按文件路径选择实例、同步外部磁盘改动、应用可编辑的 `source.fixAll` 或 Quick Fix 并保存。没有匹配实例、LSP 或修复项时正常退出；Neovim 中存在未保存修改或 WorkspaceEdit 不安全时会拒绝执行
+
+对目录传入 `--all` 时，会遵守 ignore 规则并通过同一个活动 Neovim 实例串行修复文件。实例在任务开始时只解析一次并全程固定；为未打开文件创建的临时 buffer 会在每次请求后清理。目录必须位于一个已经启动 vv-mcp 的 Neovim 工作区中
 
 官方文档: [Codex](https://developers.openai.com/codex/mcp/), [Claude Code](https://docs.anthropic.com/en/docs/claude-code/mcp), [Cursor](https://docs.cursor.com/context/model-context-protocol), [Gemini CLI](https://geminicli.com/docs/tools/mcp-server/), [OpenCode](https://opencode.ai/docs/mcp-servers/)
 

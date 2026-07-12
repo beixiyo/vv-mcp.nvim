@@ -14,6 +14,9 @@ local M = {}
 ---@field requires_action_id? boolean 是否要求 Code Action 事务 ID
 ---@field requires_call_id? boolean 是否要求调用层级节点 ID
 ---@field sync_from_disk? boolean 是否在请求前安全同步外部磁盘改动
+---@field wait_all_clients? boolean 是否必须等待 buffer 上所有客户端完成初始化
+---   声称「修完整个文档」的操作需要它：否则先握手完成的 LSP 会让等待提前结束，
+---   晚初始化的 LSP（如 tailwindcss）的修复项会被整批漏掉
 
 ---@type table<string, VVMcpLspOperation>
 local operations = {
@@ -158,6 +161,7 @@ local operations = {
     name = 'fix_document_preview',
     method = 'textDocument/codeAction',
     requires_position = false,
+    wait_all_clients = true,
     scope = 'document',
     handler = 'code_actions',
   },
@@ -166,6 +170,7 @@ local operations = {
     method = 'textDocument/codeAction',
     requires_position = false,
     sync_from_disk = true,
+    wait_all_clients = true,
     scope = 'document',
     handler = 'code_actions',
   },
