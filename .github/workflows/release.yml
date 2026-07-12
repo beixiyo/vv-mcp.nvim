@@ -33,7 +33,7 @@ jobs:
           workspaces: vv-mcp.nvim
       - uses: rhysd/action-setup-vim@febef33995d6649302e9d88dda81e071b68f16a7
         with:
-          version: nightly
+          version: v0.12.0
           neovim: true
       - name: Match tag and Cargo version
         working-directory: vv-mcp.nvim

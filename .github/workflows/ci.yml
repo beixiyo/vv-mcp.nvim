@@ -22,7 +22,7 @@ jobs:
       - uses: Swatinem/rust-cache@7e35be21c2b94d972b1143087fabc27d7dc881ef
       - uses: rhysd/action-setup-vim@febef33995d6649302e9d88dda81e071b68f16a7
         with:
-          version: nightly
+          version: v0.12.0
           neovim: true
       - run: cargo fmt --all -- --check
       - run: cargo test --locked --all-targets --all-features
@@ -43,9 +43,33 @@ jobs:
           path: vv-utils.nvim
       - uses: rhysd/action-setup-vim@febef33995d6649302e9d88dda81e071b68f16a7
         with:
-          version: nightly
+          version: v0.12.0
           neovim: true
       - name: Run Lua tests
+        working-directory: vv-mcp.nvim
+        run: |
+          for test in tests/test_*.lua; do
+            nvim --headless -u NONE -l "$test"
+          done
+
+  lua-nightly:
+    runs-on: ubuntu-24.04
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          persist-credentials: false
+          path: vv-mcp.nvim
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        with:
+          repository: beixiyo/vv-utils.nvim
+          persist-credentials: false
+          path: vv-utils.nvim
+      - uses: rhysd/action-setup-vim@febef33995d6649302e9d88dda81e071b68f16a7
+        with:
+          version: nightly
+          neovim: true
+      - name: Run Lua tests against Neovim nightly
         working-directory: vv-mcp.nvim
         run: |
           for test in tests/test_*.lua; do

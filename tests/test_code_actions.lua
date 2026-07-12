@@ -18,7 +18,12 @@ local delayed_requests = 0
 local client = {
   id = 901,
   name = 'fixture-lsp',
+  attached_buffers = { [bufnr] = true },
+  config = {},
+  initialized = true,
   offset_encoding = 'utf-16',
+  server_capabilities = {},
+  stop = function() end,
   supports_method = function() return true end,
   request_sync = function(_, _, params)
     request_log[#request_log + 1] = vim.deepcopy(params)
