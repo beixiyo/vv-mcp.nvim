@@ -1,107 +1,203 @@
 # vv-mcp.nvim
 
-Expose Neovim LSP intelligence and live editor context to AI agents through the Model Context Protocol (MCP)
+[English](./README.md) | [中文](./README.zh-CN.md)
 
-> **Using VS Code?** See [vsc-lsp-mcp](https://github.com/beixiyo/vsc-lsp-mcp), the sibling implementation with a shared multi-window Broker, filtered LSP operations, transactional rename, and safe Code Actions
+Expose Neovim LSP intelligence and live editor state to AI agents through the Model Context Protocol (MCP)
 
-## Overview
-
-AI coding agents can search files, but text search alone cannot reliably answer semantic questions such as:
-
-- Which declaration does this symbol resolve to?
-- Which calls are real function calls rather than imports or text matches?
-- What signature, parameter, type, or documentation does the active language server provide?
-- Which diagnostics and quick fixes are currently available?
-- What does Neovim contain before an unsaved buffer reaches disk?
-- Which Neovim process owns a file when several projects are open?
-
-vv-mcp.nvim connects AI agents to the same LSP clients and live buffers already running inside Neovim. A small Lua plugin registers each Neovim process, while the `vv-mcp` Rust server discovers the correct instance, executes requests through Neovim RPC, and compresses the results before returning them to the model
+> [!TIP]
+> **Using VSCode?** See [vsc-lsp-mcp](https://github.com/beixiyo/vsc-lsp-mcp) for the same LSP workflows
 
 ![LSP MCP demo](https://raw.githubusercontent.com/beixiyo/vsc-lsp-mcp/main/docAssets/demo.webp)
 
 ## Why vv-mcp.nvim?
 
-- **Semantic navigation instead of text guessing** — definitions, references, symbols, hover, signatures, diagnostics, and call hierarchy come from the attached LSP clients
-- **Live editor state** — agents can read unsaved buffers, the current cursor context, visible files, and Visual selections without pretending disk content is current
-- **Multiple Neovim instances** — requests route by exact `instanceId` or the longest matching project root
-- **Token-efficient output** — raw LSP wrappers are flattened, duplicate locations are removed, paths are grouped, and large lists are capped after filtering
-- **Safe writes** — rename and Code Actions require a preview before apply; stale, expired, reused, overlapping, command-only, and unsupported resource edits are rejected
-- **Multi-LSP aware** — formatting and utility clients do not block semantic clients such as `tsgo`, `rust_analyzer`, `gopls`, or `jdtls`
+Text search can find matching words, but it cannot reliably answer semantic questions:
 
-## Features
+- Which declaration does this symbol resolve to?
+- Which references are real usages rather than text matches?
+- Who calls this function, and what does it call?
+- What types, signatures, diagnostics, or fixes does the active LSP provide?
+- What does Neovim currently contain before an unsaved buffer reaches disk?
 
-- 24 LSP operations across navigation, documentation, diagnostics, symbols, call hierarchy, rename, and Code Actions
-- Read-only live editor context through a separate `editor` tool
-- Compact JSON and Markdown output with configurable `max-results`
-- Case-insensitive symbol-name, diagnostic source/code, and path filters where applicable
-- Workspace-first call hierarchy sorting so dependency methods do not consume the result budget
-- 1-based input and output positions that can be reused directly between calls
-- Local multi-instance registry with automatic stale-instance cleanup
+vv-mcp.nvim gives AI agents access to the LSP clients and live buffers already running inside Neovim
 
-## Architecture
+- **Semantic navigation** — definitions, references, implementations, symbols, hover, signatures, and call hierarchy
+- **Diagnostics and fixes** — filtered diagnostics, safe Code Actions, and document-wide fixes
+- **Safe rename** — preview-gated symbol, file, and directory rename with stale-edit protection
+- **Live editor state** — current context, loaded buffers, unsaved text, and Visual selections
+- **Multiple Neovim instances** — route requests to the correct project instead of guessing
+- **Compact output** — filter, deduplicate, group, and limit LSP results before returning them to the model
 
-### What is a Broker?
+## Installation
 
-A Broker is an intermediary that receives a request, selects the process capable of handling it, forwards the request, and returns the response. It does not replace Neovim or the language server
+Using [lazy.nvim](https://github.com/folke/lazy.nvim):
 
-In vv-mcp.nvim, the Rust `vv-mcp` process is both the public MCP server and the Broker:
-
-- MCP clients only communicate with one stable stdio process
-- the Broker reads the instance registry and selects the correct Neovim process
-- the selected Neovim process executes the request against its own buffers and attached LSP clients
-- the Broker compresses the result into JSON or Markdown before returning it to the AI
-
-```text
-AI agent
-  │ stdio MCP
-  ▼
-vv-mcp Rust server
-  │ instance registry + project-root routing
-  ▼
-matching Neovim process
-  │ MessagePack RPC / exec_lua
-  ▼
-Lua handlers → attached LSP clients / live buffers
-```
-
-### How multi-instance routing works
-
-Every Neovim process has an independent RPC socket and its own buffers, working directory, and LSP clients. The Lua plugin publishes the following metadata to the local registry:
-
-```json
-{
-  "instanceId": "react-tool-aee4be3b:72852",
-  "pid": 72852,
-  "socket": "/tmp/nvim.72852.0",
-  "cwd": "/code/react-tool",
-  "roots": ["/code/react-tool", "/code/react-tool/packages/app"],
-  "lspClients": ["tailwindcss", "tsgo"]
+```lua
+return {
+  'beixiyo/vv-mcp.nvim',
+  lazy = false,
+  dependencies = { 'beixiyo/vv-utils.nvim' },
+  opts = {},
 }
 ```
 
-The registry is refreshed when Neovim starts and when focus, directory, or LSP attachment state changes. It is removed on `VimLeavePre`; stale records are also ignored and cleaned by the Rust server
+The plugin must load during Neovim startup so the current instance can be registered immediately
 
-For each request, the Broker resolves the instance in this order:
+## Configuration
 
-1. Use an explicit `instanceId` when provided
-2. Otherwise select the instance whose project root is the longest path prefix of `uri`
-3. Reject equally specific matches as ambiguous instead of guessing
-4. Connect to the selected Neovim socket and execute the Lua LSP/editor handler through MessagePack RPC
+The default `opts = {}` is sufficient for most projects
 
-For example, `/code/app/packages/ui/src/Button.tsx` prefers an instance rooted at `/code/app/packages/ui` over one rooted at `/code/app`. If two Neovim processes open the same root, call `list_instances` and pass the intended `instanceId`
+Dependency markers classify paths when filtering references and sorting call hierarchy nodes. The defaults cover common Node.js, Rust, Go, Java, Python, Mason, and vendored dependency directories
+
+Override the complete marker list when a project uses custom dependency paths:
+
+```lua
+{
+  'beixiyo/vv-mcp.nvim',
+  lazy = false,
+  dependencies = { 'beixiyo/vv-utils.nvim' },
+  opts = {
+    lsp = {
+      dependency_markers = {
+        '/node_modules/',
+        '/vendor/',
+        '/third_party/',
+      },
+    },
+  },
+}
+```
+
+Markers are normalized path substrings, not glob or Lua patterns
+
+Use a custom server binary when developing vv-mcp itself:
+
+It builds a debug binary at `./target/debug/vv-mcp`:
+
+```bash
+cargo build
+```
+
+```lua
+{
+  'beixiyo/vv-mcp.nvim',
+  lazy = false,
+  dependencies = { 'beixiyo/vv-utils.nvim' },
+  opts = {
+    server = {
+      path = '/absolute/path/to/vv-mcp',
+    },
+  },
+}
+```
+
+The default server output is compact JSON with at most 200 results. Configure the stdio command through arguments:
+
+```json
+{
+  "command": "/absolute/path/to/vv-mcp",
+  "args": ["--output-format", "markdown", "--max-results", "100"]
+}
+```
+
+or environment variables:
+
+```text
+VV_MCP_OUTPUT_FORMAT=markdown
+VV_MCP_MAX_RESULTS=100
+```
+
+Available formats:
+
+- `json` — compact machine-readable output
+- `markdown` — concise path-oriented output for direct model consumption
+
+Positions use 1-based `line:character-line:character` strings. Truncated responses report both the shown and filtered totals
+
+## MCP client setup
+
+After starting Neovim, get the MCP server path:
+
+```vim
+:VVMcpInfo
+```
+
+or:
+
+```vim
+:lua print(require('vv-mcp').server_path())
+```
+
+Use the absolute path returned by `:VVMcpInfo`
+
+**Codex**
+
+```bash
+codex mcp add vv-mcp -- /absolute/path/to/vv-mcp
+```
+
+or add it to `~/.codex/config.toml`:
+
+```toml
+[mcp_servers.vv-mcp]
+command = "/absolute/path/to/vv-mcp"
+```
+
+**Claude Code**
+
+```bash
+claude mcp add --scope user vv-mcp -- /absolute/path/to/vv-mcp
+```
+
+**Gemini CLI**
+
+```bash
+gemini mcp add --scope user vv-mcp /absolute/path/to/vv-mcp
+```
+
+**Cursor** — `~/.cursor/mcp.json`
+
+```json
+{
+  "mcpServers": {
+    "vv-mcp": {
+      "command": "/absolute/path/to/vv-mcp"
+    }
+  }
+}
+```
+
+**OpenCode** — `~/.config/opencode/opencode.jsonc`
+
+```jsonc
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "vv-mcp": {
+      "type": "local",
+      "command": ["/absolute/path/to/vv-mcp"],
+      "enabled": true
+    }
+  }
+}
+```
+
+Restart the MCP client after changing its configuration. Keep Neovim running so the project instance remains available
+
+Official MCP setup documentation: [Codex](https://developers.openai.com/codex/mcp/), [Claude Code](https://docs.anthropic.com/en/docs/claude-code/mcp), [Cursor](https://docs.cursor.com/context/model-context-protocol), [Gemini CLI](https://geminicli.com/docs/tools/mcp-server/), [OpenCode](https://opencode.ai/docs/mcp-servers/)
 
 ## MCP tools
 
 | Tool | Purpose |
 |------|---------|
-| `health` | Report registry path, output format, and result limit |
-| `list_instances` | List running Neovim projects, roots, sockets, and attached LSP clients |
-| `resolve_instance` | Resolve one instance explicitly by `instanceId` or absolute file path |
-| `lsp` | Execute one filtered LSP operation through the matching Neovim instance |
+| `health` | Show server status, registry path, output format, and result limit |
+| `list_instances` | List running Neovim projects and attached LSP clients |
+| `resolve_instance` | Resolve an instance from an `instanceId` or absolute path |
+| `lsp` | Execute a filtered LSP operation |
 | `editor` | Read live Neovim context, buffers, selections, and unsaved text |
 | `workspace` | Preview and apply LSP-aware file or directory renames |
 
-### LSP operations
+**LSP operations**
 
 | Category | Operations |
 |----------|------------|
@@ -113,167 +209,137 @@ For example, `/code/app/packages/ui/src/Button.tsx` prefers an instance rooted a
 | Code Actions | `code_actions`, `code_action_preview`, `fix_document_preview`, `code_action_apply` |
 | Rename | `prepare_rename`, `rename_preview`, `rename_apply` |
 
-When a symbol position is uncertain, call `document_symbols` for a known file or `workspace_symbols` with a project query, then reuse the returned 1-based range start
+## Common workflows
 
-## Installation
+**Find a symbol before using position-based operations**
 
-Build and install the Rust MCP server:
+Use `document_symbols` for a known file or `workspace_symbols` for a project-wide name query. Reuse the returned 1-based range start in `hover`, `references`, rename, or call hierarchy requests
 
-```bash
-cargo install --path crates/vv-mcp
+**Inspect a call graph**
+
+```text
+prepare_call_hierarchy
+  → incoming_calls
+  → incoming_calls with a returned callId
 ```
 
-Load the Neovim plugin and call setup:
+Use `outgoing_calls` to inspect what the selected function calls. Pass `includeExternal=false` when project code matters more than dependency or standard-library nodes
 
-```lua
-vim.pack.add({
-  { src = 'https://github.com/beixiyo/vv-mcp.nvim' },
-})
+**Apply one Code Action**
 
-require('vv-mcp').setup()
+```text
+code_actions
+  → code_action_preview
+  → code_action_apply
 ```
 
-Then configure the MCP client to launch the stdio server:
+The preview returns a single-use `actionId`. Applying it validates the target versions, writes the edits, and saves the affected buffers
 
-```json
-{
-  "mcpServers": {
-    "vv-mcp": {
-      "command": "vv-mcp"
-    }
-  }
-}
+**Fix a document**
+
+```text
+fix_document_preview
+  → code_action_apply
 ```
 
-Restart Neovim after installation so the instance registry contains the active editor process
+Document fixes prefer LSP `source.fixAll` actions and fall back to non-overlapping diagnostic quick fixes
 
-## Neovim configuration
+**Rename a symbol**
 
-Paths containing a dependency marker are classified as dependencies when filtering references and sorting call hierarchy nodes. Override the defaults through `setup` when a project uses a custom dependency directory:
-
-The defaults cover Node.js (`node_modules`, pnpm), Rust (Cargo and rustlib), Go module caches, Java Maven/Gradle caches, Python virtual environments, Mason packages, and vendored dependencies
-
-```lua
-require('vv-mcp').setup({
-  lsp = {
-    dependency_markers = {
-      '/node_modules/',
-      '/vendor/',
-      '/third_party/',
-    },
-  },
-})
+```text
+prepare_rename
+  → rename_preview
+  → rename_apply
 ```
 
-`dependency_markers` uses normalized path substrings rather than glob or Lua patterns. Providing the option replaces the complete default list
+The preview returns a single-use `renameId` and reports every affected file before anything changes
 
-Available commands:
+**Rename a file or directory**
 
-- `:VVMcpInfo` — show the current instance and registry record
-- `:VVMcpRefresh` — refresh the current instance immediately
+Use the separate `workspace` tool:
+
+```text
+rename_resource_preview
+  → rename_resource_apply
+```
+
+The operation collects `workspace/willRenameFiles` edits, updates imports and exports, moves the resource, synchronizes loaded buffer names, and sends `workspace/didRenameFiles`
+
+Both paths must remain inside one workspace root. Save modified buffers below the source path before previewing the rename
 
 ## Live editor context
 
-The read-only `editor` MCP tool exposes Neovim state that may differ from files on disk:
+The read-only `editor` tool exposes state that may differ from files on disk:
 
-- `current_context` — current buffer, cursor, mode, working directory, window, tab, filetype, modified state, and attached LSP clients
-- `list_buffers` — editable loaded file buffers with visibility and modified state; `includeSpecial=true` also returns plugin, terminal, help, and other special buffers
-- `read_buffer` — live text from one loaded buffer, including unsaved changes; supports 1-based line ranges and defaults to 200 lines
-- `get_selection` — current character, line, or block Visual selection with text and a 1-based range
+| Operation | Result |
+|-----------|--------|
+| `current_context` | Current file, cursor, mode, working directory, window, tab, and attached LSP clients |
+| `list_buffers` | Editable loaded file buffers; pass `includeSpecial=true` to include plugin and terminal buffers |
+| `read_buffer` | Live text from one loaded buffer, including unsaved changes and optional line ranges |
+| `get_selection` | Current character, line, or block Visual selection with text and a 1-based range |
 
-Use `instanceId` for current-state operations when several Neovim instances are running. `read_buffer` can select an instance automatically from its absolute `uri`
+Use an explicit `instanceId` for current-state operations when several Neovim instances are running
 
 ## Filtering large results
 
-Filters are applied before `max-results`, so relevant items are not hidden behind arbitrary truncation:
+Filters run before the result limit, so relevant items are not hidden by unrelated entries:
 
-- `document_symbols` — `query`, `symbolKinds`
-- `references` — `includeDeclaration`, `includeExternal`, `pathPattern`
-- `diagnostics`, `workspace_diagnostics` — `severities`, `sources`, `codes`
-- `incoming_calls`, `outgoing_calls` — `includeExternal`
-- `inlay_hints` — `startLine`, `endLine`
+| Operation | Filters |
+|-----------|---------|
+| `document_symbols` | `query`, `symbolKinds` |
+| `references` | `includeDeclaration`, `includeExternal`, `pathPattern` |
+| `diagnostics`, `workspace_diagnostics` | `severities`, `sources`, `codes` |
+| `incoming_calls`, `outgoing_calls` | `includeExternal` |
+| `inlay_hints` | `startLine`, `endLine` |
 
-Call hierarchy results are sorted by `workspace > dependency > external`, then by `Function/Constructor > Method > other`
+Call hierarchy results prioritize workspace nodes, then dependencies, then external files. Functions and constructors are shown before methods and other symbol kinds
 
-## Safe rename and Code Actions
+## Commands
 
-Rename is a three-step transaction:
+| Command | Purpose |
+|---------|---------|
+| `:VVMcpInfo` | Show the current instance and MCP server path |
+| `:VVMcpRefresh` | Refresh the current instance record |
+| `:VVMcpInstall` | Install the managed MCP server |
+| `:VVMcpUpdate` | Update the managed MCP server |
+| `:VVMcpUninstall` | Remove the managed MCP server |
 
-1. `prepare_rename` confirms the symbol and range
-2. `rename_preview` returns a single-use `renameId` and a capped edit summary without changing files
-3. `rename_apply` rejects expired or stale previews, applies every edit, and saves all target buffers to disk
+## Safety boundaries
 
-A specific Code Action follows the same safety model:
-
-1. `code_actions` lists editable actions at an exact diagnostic or symbol position
-2. `code_action_preview` returns the affected files and ranges without modifying them
-3. `code_action_apply` validates and saves the single-use transaction
-
-For an entire document, use `fix_document_preview -> code_action_apply`. It prefers LSP `source.fixAll` actions and falls back to non-overlapping diagnostic quick fixes. Command-only actions and file resource operations are not applied
-
-## File and directory rename
-
-The separate `workspace` tool provides an LSP-aware resource rename transaction:
-
-1. `rename_resource_preview` validates `oldUri` and `newUri`, collects `workspace/willRenameFiles` import edits, and returns `resourceRenameId` without modifying files
-2. `rename_resource_apply` revalidates the source, target, buffers, and edits; saves import updates; moves the file or directory; synchronizes loaded buffer names; and sends `workspace/didRenameFiles`
-
-Both paths must remain inside one workspace root. Save modified buffers below the source path before preview. File resource edits returned inside `willRenameFiles` are rejected because they cannot be merged safely with the explicit move transaction
-
-## Output configuration
-
-LSP results are flattened before they reach the AI: URI wrappers and redundant ranges are removed, locations are grouped by file path, duplicate locations are removed, and positions use compact 1-based `line:character-line:character` strings
-
-The default output is compact JSON with at most 200 results:
-
-```json
-{
-  "clients": ["tsgo"],
-  "locations": {
-    "/project/src/a.ts": ["10:3-10:12", "25:5-25:14"]
-  }
-}
-```
-
-Configure the stdio server with command-line arguments:
-
-```json
-{
-  "command": "vv-mcp",
-  "args": ["--output-format", "markdown", "--max-results", "100"]
-}
-```
-
-Or environment variables:
-
-```text
-VV_MCP_OUTPUT_FORMAT=markdown
-VV_MCP_MAX_RESULTS=100
-```
-
-Available formats:
-
-- `json` (default) — compact machine-readable locations grouped by path
-- `markdown` — concise path-oriented bullets for direct model consumption
-
-`--max-results` defaults to `200` and must be greater than zero. A truncated response explicitly reports how many filtered results were shown and how many were available
-
-Example Markdown response:
-
-```markdown
-## References
-Clients: `tsgo`
-- `/project/src/a.ts`: 10:3-10:12, 25:5-25:14
-(Showing 100 of 340 results)
-```
-
-## Security boundaries
-
-- The MCP server connects only to local Neovim sockets or loopback TCP addresses
+- The MCP server only connects to local Neovim sockets or loopback TCP addresses
 - Editor operations are read-only
 - Preview operations never modify buffers or files
-- Apply operations reject stale, expired, reused, overlapping, command-only, and unsupported resource edits
-- Instance records are local runtime metadata and are removed when Neovim exits or becomes stale
+- Apply operations reject stale, expired, reused, overlapping, command-only, and unsupported edits
+- Resource renames are restricted to one workspace root
+- Instance records are removed when Neovim exits or when the server detects stale state
+
+## Architecture
+
+Each Neovim process registers its RPC address, project roots, working directory, and attached LSP clients in a local instance registry
+
+The Rust MCP server acts as a Broker: it receives one MCP request, selects the matching Neovim process, forwards the operation through MessagePack RPC, and returns a compact result
+
+```text
+AI agent
+  │ stdio MCP
+  ▼
+vv-mcp Rust server
+  │ local registry + project-root routing
+  ▼
+matching Neovim process
+  │ MessagePack RPC
+  ▼
+Lua handlers → attached LSP clients / live buffers
+```
+
+Instance routing follows this order:
+
+1. Use an explicit `instanceId` when provided
+2. Otherwise choose the instance whose project root is the longest prefix of the target path
+3. Reject equally specific matches as ambiguous instead of guessing
+4. Ignore and clean stale instance records
+
+This allows nested workspaces to select the most specific Neovim process while keeping overlapping instances explicit and safe
 
 ## License
 
