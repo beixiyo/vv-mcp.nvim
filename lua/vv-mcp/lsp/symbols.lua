@@ -18,7 +18,8 @@ local function filter_symbols(symbols, query, allowed_kinds)
       local output = vim.deepcopy(symbol)
       output.children = children
       filtered[#filtered + 1] = output
-    elseif #children > 0 then
+    -- 叶子符号没有 children，递归会原样返回 nil，不能直接取长度
+    elseif children and #children > 0 then
       vim.list_extend(filtered, children)
     end
   end

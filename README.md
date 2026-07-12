@@ -182,18 +182,34 @@ claude mcp add --scope user lsp-mcp -- vv-mcp
 
 Restart the MCP client after changing its configuration. Keep Neovim running so the project instance remains available
 
-For editor and agent hooks that can run commands, apply available LSP fixes without an MCP client:
+Official MCP setup documentation: [Codex](https://developers.openai.com/codex/mcp/) | [Claude Code](https://docs.anthropic.com/en/docs/claude-code/mcp) | [Cursor](https://docs.cursor.com/context/model-context-protocol) | [OpenCode](https://opencode.ai/docs/mcp-servers/)
+
+## Command line
+
+The same binary is both the MCP server and a CLI. **With no subcommand it serves MCP** (that is how clients launch it); with a subcommand it runs one request and exits, which suits editor hooks and scripts that cannot speak MCP.
 
 ```bash
-vv-mcp fix /absolute/path/to/file.ts
-vv-mcp fix /absolute/path/to/project --all
+vv-mcp fix src/main.ts                # apply and save safe LSP fixes
+vv-mcp fix src --all                  # fix a whole directory, honoring ignore rules
+vv-mcp lsp --operation hover --uri src/main.ts --line 42 --character 17
+vv-mcp editor --operation read_buffer --uri src/main.ts --start-line 1 --end-line 40
 ```
 
-Pass `--line <number>` to apply only Quick Fixes associated with one 1-based line. Without it, the command routes by file path, synchronizes external disk changes, applies editable `source.fixAll` or quick-fix actions, and saves the result. No matching instance, LSP, or fix is a successful no-op. Unsaved Neovim buffers and unsafe workspace edits are rejected
+Three subcommands:
 
-Pass `--all` with a directory to walk non-ignored files and fix them sequentially through one active Neovim instance. The instance is resolved once and pinned for the whole run; temporary buffers created for unopened files are removed after each request. Directory mode requires a running vv-mcp-enabled Neovim instance whose workspace contains the path
+| Subcommand | Purpose |
+|------------|---------|
+| `fix` | Fix and save a file or directory; emits JSON, built for hooks |
+| `lsp` | Run any LSP operation; shares one parameter definition with the MCP `lsp` tool |
+| `editor` | Read live editor state; read-only |
 
-Official MCP setup documentation: [Codex](https://developers.openai.com/codex/mcp/), [Claude Code](https://docs.anthropic.com/en/docs/claude-code/mcp), [Cursor](https://docs.cursor.com/context/model-context-protocol), [Gemini CLI](https://geminicli.com/docs/tools/mcp-server/), [OpenCode](https://opencode.ai/docs/mcp-servers/)
+Run `vv-mcp <subcommand> --help` for the full list of operations and flags. A few shared conventions:
+
+- Paths resolve against the current directory, so relative paths work
+- Instances are routed by path; pass `--instance-id` when workspaces overlap or the operation has no path (see `vv-mcp --list-instances`)
+- Operations that write to disk (`fix_document`, `code_action_apply`, `rename_apply`) require an explicit `--yes`
+- Output is markdown by default because humans read it; `--output-format json` switches. `vv-mcp fix` always emits JSON, so existing hooks need no changes
+- A result carrying an error exits with status 1
 
 ## MCP tools
 

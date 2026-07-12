@@ -184,18 +184,34 @@ claude mcp add --scope user lsp-mcp -- vv-mcp
 
 修改 MCP 配置后重启客户端。请保持 Neovim 运行，以便保持项目实例可达
 
-对于能够执行命令的编辑器或 Agent Hook，无需 MCP 客户端即可自动应用可用的 LSP 修复：
+官方文档: [Codex](https://developers.openai.com/codex/mcp/) | [Claude Code](https://docs.anthropic.com/en/docs/claude-code/mcp) | [Cursor](https://docs.cursor.com/context/model-context-protocol) | [OpenCode](https://opencode.ai/docs/mcp-servers/)
+
+## 命令行
+
+同一个二进制既是 MCP 服务端，也是命令行工具。**不带子命令时进入 MCP 模式**(客户端就是这样启动它的)，带子命令时执行一次请求后退出。适合无法接入 MCP 的编辑器 Hook 与脚本
 
 ```bash
-vv-mcp fix /absolute/path/to/file.ts
-vv-mcp fix /absolute/path/to/project --all
+vv-mcp fix src/main.ts                # 应用并保存安全的 LSP 修复
+vv-mcp fix src --all                  # 遵守 ignore 规则，串行修复整个目录
+vv-mcp lsp --operation hover --uri src/main.ts --line 42 --character 17
+vv-mcp editor --operation read_buffer --uri src/main.ts --start-line 1 --end-line 40
 ```
 
-传入 `--line <行号>` 时仅应用该 1-based 行关联的 Quick Fix。省略时，命令会按文件路径选择实例、同步外部磁盘改动、应用可编辑的 `source.fixAll` 或 Quick Fix 并保存。没有匹配实例、LSP 或修复项时正常退出；Neovim 中存在未保存修改或 WorkspaceEdit 不安全时会拒绝执行
+三个子命令:
 
-对目录传入 `--all` 时，会遵守 ignore 规则并通过同一个活动 Neovim 实例串行修复文件。实例在任务开始时只解析一次并全程固定；为未打开文件创建的临时 buffer 会在每次请求后清理。目录必须位于一个已经启动 vv-mcp 的 Neovim 工作区中
+| 子命令 | 说明 |
+|--------|------|
+| `fix` | 自动修复文件或目录并保存，输出 JSON，专为 Hook 设计 |
+| `lsp` | 执行任意一个 LSP 操作，与 MCP `lsp` 工具共用同一份参数定义 |
+| `editor` | 读取实时编辑器状态，全部只读 |
 
-官方文档: [Codex](https://developers.openai.com/codex/mcp/), [Claude Code](https://docs.anthropic.com/en/docs/claude-code/mcp), [Cursor](https://docs.cursor.com/context/model-context-protocol), [Gemini CLI](https://geminicli.com/docs/tools/mcp-server/), [OpenCode](https://opencode.ai/docs/mcp-servers/)
+`vv-mcp <子命令> --help` 会列出全部操作与参数。几个通用约定:
+
+- 路径按当前目录解析，相对路径可用
+- 实例按路径自动路由；工作区重叠或操作不带路径时用 `--instance-id`(见 `vv-mcp --list-instances`)
+- 会写盘的操作(`fix_document`、`code_action_apply`、`rename_apply`)必须显式传入 `--yes`
+- 输出默认 markdown(给人看)，`--output-format json` 可切换；`vv-mcp fix` 始终输出 JSON，Hook 脚本无需调整
+- 结果中带 error 时以退出码 1 结束
 
 ## MCP 工具
 

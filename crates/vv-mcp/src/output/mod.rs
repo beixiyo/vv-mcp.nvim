@@ -6,6 +6,7 @@ mod config;
 mod diagnostics;
 mod document_features;
 mod documentation;
+mod editor;
 mod highlights;
 mod locations;
 mod markdown;
@@ -66,6 +67,10 @@ impl OutputConfig {
 
     pub fn format_workspace(&self, operation: &str, raw: Value) -> String {
         workspace::format(operation, raw, self.max_results, self.format)
+    }
+
+    pub fn format_editor(&self, operation: &str, raw: Value) -> String {
+        editor::format(operation, raw, self.max_results, self.format)
     }
 }
 

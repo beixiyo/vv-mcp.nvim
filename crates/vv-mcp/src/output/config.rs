@@ -18,7 +18,7 @@ impl Default for OutputConfig {
     }
 }
 
-#[derive(Clone, Copy, Debug, Serialize, ValueEnum)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, ValueEnum)]
 #[serde(rename_all = "lowercase")]
 pub enum OutputFormat {
     Json,

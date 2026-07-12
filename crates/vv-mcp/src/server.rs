@@ -174,15 +174,13 @@ OPERATIONS
 Use list_instances first when more than one Neovim project is running. read_buffer can route automatically by uri; current-state operations require instanceId because they have no file path to disambiguate. This tool is read-only."#
     )]
     async fn editor(&self, Parameters(params): Parameters<EditorParams>) -> String {
-        match self.run_editor(&params).await {
-            Ok(result) => serde_json::to_string(&result).unwrap_or_else(|error| {
-                serde_json::json!({ "error": { "code": "serialization_failed", "message": error.to_string() } }).to_string()
-            }),
+        let raw = match self.run_editor(&params).await {
+            Ok(raw) => raw,
             Err(error) => serde_json::json!({
                 "error": { "code": "request_failed", "message": error }
-            })
-            .to_string(),
-        }
+            }),
+        };
+        self.output.format_editor(params.operation_name(), raw)
     }
 
     #[tool(
@@ -221,7 +219,17 @@ Both paths must be absolute and remain inside one workspace root. Modified buffe
 }
 
 impl VvMcpServer {
-    async fn run_lsp(&self, params: &LspParams) -> Result<Value, String> {
+    /// 按配置的输出格式渲染一次 LSP 结果，CLI 与 MCP 工具共用同一套格式化
+    pub fn format_lsp(&self, operation: &str, raw: Value) -> String {
+        self.output.format_lsp(operation, raw)
+    }
+
+    /// 按配置的输出格式渲染一次编辑器状态结果
+    pub fn format_editor(&self, operation: &str, raw: Value) -> String {
+        self.output.format_editor(operation, raw)
+    }
+
+    pub async fn run_lsp(&self, params: &LspParams) -> Result<Value, String> {
         let mut last_error = None;
 
         for attempt in 0..2 {
@@ -257,7 +265,7 @@ impl VvMcpServer {
             .await
     }
 
-    async fn run_editor(&self, params: &EditorParams) -> Result<Value, String> {
+    pub async fn run_editor(&self, params: &EditorParams) -> Result<Value, String> {
         let mut last_error = None;
         for attempt in 0..2 {
             let instances = self.instances().await.map_err(|error| error.to_string())?;
@@ -278,7 +286,7 @@ impl VvMcpServer {
             };
             let value = serde_json::to_value(params).map_err(|error| error.to_string())?;
             match client
-                .exec_lua_with_timeout(EDITOR_REQUEST, vec![value], Duration::from_secs(4))
+                .exec_lua_with_timeout(EDITOR_REQUEST, vec![value], rpc_timeout(params.timeout_ms))
                 .await
             {
                 Ok(result) => return Ok(result),
@@ -328,38 +336,85 @@ struct ResolveInstanceParams {
     uri: Option<String>,
 }
 
-#[derive(Debug, Deserialize, Serialize, schemars::JsonSchema)]
+/// 编辑器只读状态参数：与 `LspParams` 一样，一份定义同时驱动 MCP schema、线上负载与命令行
+#[derive(Debug, Deserialize, Serialize, schemars::JsonSchema, clap::Args)]
 #[serde(rename_all = "camelCase")]
-struct EditorParams {
-    /// 要读取的编辑器状态
+pub struct EditorParams {
+    /// Editor state to read
+    #[arg(long, value_enum)]
     operation: EditorOperation,
-    /// `list_instances` 返回的实例 ID；当前状态操作必须提供
+    /// Instance ID from `list_instances`; required for current-state operations
+    /// On CLI, injected as a global option by `set_routing`
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[arg(skip)]
     instance_id: Option<String>,
-    /// `read_buffer` 要读取的原生 Unix 或 Windows 绝对路径
+    /// Optional timeout in milliseconds on Neovim side
+    /// On CLI, injected as a global option by `set_routing`
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[arg(skip)]
+    timeout_ms: Option<u32>,
+    /// Native Unix or Windows absolute path for `read_buffer`
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[arg(long)]
     uri: Option<String>,
-    /// `read_buffer` 的可选起始行，从 1 开始且包含该行
+    /// Optional start line for `read_buffer`, 1-based inclusive
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[arg(long)]
     start_line: Option<u32>,
-    /// `read_buffer` 的可选结束行，从 1 开始且包含该行
+    /// Optional end line for `read_buffer`, 1-based inclusive
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[arg(long)]
     end_line: Option<u32>,
-    /// `read_buffer` 最多返回的行数，默认为 200
+    /// Maximum lines returned for `read_buffer`, defaults to 200
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[arg(long)]
     max_lines: Option<u32>,
-    /// `list_buffers` 是否包含插件、终端、帮助页等特殊 buffer，默认为 false
+    /// Include plugin, terminal, help, and other special buffers in `list_buffers`; defaults to false
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[arg(long, num_args = 0..=1, default_missing_value = "true")]
     include_special: Option<bool>,
 }
 
-#[derive(Debug, Deserialize, Serialize, schemars::JsonSchema)]
+impl EditorParams {
+    /// 线上使用的操作名，同时用于挑选输出格式化器
+    pub fn operation_name(&self) -> &'static str {
+        self.operation.as_str()
+    }
+
+    /// 注入命令行上的全局路由参数：实例选择与超时对每个子命令都生效
+    pub fn set_routing(&mut self, instance_id: Option<String>, timeout_ms: Option<u32>) {
+        self.instance_id = instance_id;
+        self.timeout_ms = timeout_ms;
+    }
+
+    pub fn uri(&self) -> Option<&str> {
+        self.uri.as_deref()
+    }
+
+    pub fn set_uri(&mut self, uri: String) {
+        self.uri = Some(uri);
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, schemars::JsonSchema, clap::ValueEnum)]
 #[serde(rename_all = "snake_case")]
+#[value(rename_all = "snake_case")]
 enum EditorOperation {
     CurrentContext,
     ListBuffers,
     ReadBuffer,
     GetSelection,
+}
+
+impl EditorOperation {
+    fn as_str(&self) -> &'static str {
+        match self {
+            Self::CurrentContext => "current_context",
+            Self::ListBuffers => "list_buffers",
+            Self::ReadBuffer => "read_buffer",
+            Self::GetSelection => "get_selection",
+        }
+    }
 }
 
 #[derive(Debug, Deserialize, Serialize, schemars::JsonSchema)]
@@ -426,77 +481,132 @@ impl WorkspaceParams {
     }
 }
 
-#[derive(Debug, Deserialize, Serialize, schemars::JsonSchema)]
+/// LSP 请求参数：同一份定义同时驱动 MCP schema（schemars）、线上负载（serde）与命令行（clap）
+///
+/// 新增字段只需写一次：serde 生成 camelCase 的 JSON 字段，clap 生成 kebab-case 的长选项，
+/// 字段上的文档注释同时作为 MCP description 与 `--help` 文案，两个面不会漂移
+#[derive(Debug, Deserialize, Serialize, schemars::JsonSchema, clap::Args)]
 #[serde(rename_all = "camelCase")]
-struct LspParams {
-    /// 要执行的 LSP 操作；部分 apply 操作会写入磁盘，必须遵循工具描述中的安全写入流程
+pub struct LspParams {
+    /// LSP operation to execute; some apply operations write to disk and must follow the safe write flow
+    #[arg(long, value_enum)]
     operation: LspOperation,
-    /// 原生 Unix 或 Windows 绝对路径；推荐普通路径，同时兼容 file URI
+    /// Native Unix or Windows absolute path; plain paths recommended, also accepts file URIs
+    #[arg(long)]
     uri: String,
-    /// 从 1 开始的行号；仅位置操作需要，优先复用符号查询返回的 range 起点
+    /// 1-based line number; required for position operations, prefer reusing range start from symbol queries
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[arg(long)]
     line: Option<u32>,
-    /// 从 1 开始的列号；`signature_help` 必须传入目标调用参数内部的位置
+    /// 1-based column number; `signature_help` must pass a position inside the target call argument
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[arg(long)]
     character: Option<u32>,
-    /// `list_instances` 返回的实例 ID；通常省略并按 uri 自动路由，实例重叠时用于消歧
+    /// Instance ID from `list_instances`; usually omitted for automatic routing by uri, disambiguates overlapping instances
+    /// On CLI, injected as a global option by `set_routing`
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[arg(skip)]
     instance_id: Option<String>,
-    /// 非空符号搜索词；`workspace_symbols` 必填，`document_symbols` 可选且忽略大小写
+    /// Symbol search query; required for `workspace_symbols`, optional for `document_symbols` (case-insensitive)
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[arg(long)]
     query: Option<String>,
-    /// `document_symbols` 的可选符号类别筛选
+    /// Optional symbol kind filter for `document_symbols`
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[arg(long, value_enum, value_delimiter = ',')]
     symbol_kinds: Option<Vec<SymbolKindFilter>>,
-    /// 新符号名，仅 `rename_preview` 需要
+    /// New symbol name; required only for `rename_preview`
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[arg(long)]
     new_name: Option<String>,
-    /// `rename_preview` 返回的事务 ID，仅 `rename_apply` 需要
+    /// Transaction ID from `rename_preview`; required only for `rename_apply`
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[arg(long)]
     rename_id: Option<String>,
-    /// Code Action ID；候选动作必须先预览，全文件修复操作返回的 ID 已完成预览
+    /// Code Action ID; candidate actions must be previewed first, full-document fix IDs skip preview
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[arg(long)]
     action_id: Option<String>,
-    /// `code_actions` 的可选 kind 过滤器，例如 `quickfix` 或 `refactor.extract`
+    /// Optional kind filter for `code_actions`, e.g. `quickfix` or `refactor.extract`
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[arg(long)]
     action_kind: Option<String>,
-    /// Neovim 侧可选超时时间，用于响应较慢的语言服务器
+    /// Optional timeout in milliseconds on Neovim side for slower language servers
+    /// On CLI, injected as a global option by `set_routing`
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[arg(skip)]
     timeout_ms: Option<u32>,
-    /// `inlay_hints` 的可选起始行，从 1 开始；省略时从文件首行开始
+    /// Optional start line for `inlay_hints`, 1-based; omit to start from file beginning
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[arg(long)]
     start_line: Option<u32>,
-    /// `inlay_hints` 的可选结束行，从 1 开始且包含该行；省略时读取整个文件
+    /// Optional end line for `inlay_hints`, 1-based inclusive; omit to read entire file
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[arg(long)]
     end_line: Option<u32>,
-    /// 调用层级节点 ID；由 prepare 或上一层调用结果返回
+    /// Call hierarchy node ID; returned by prepare or previous level query
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[arg(long)]
     call_id: Option<String>,
-    /// `references` 是否包含符号声明，默认为 true
+    /// Include symbol declarations in `references`; defaults to true
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[arg(long, num_args = 0..=1, default_missing_value = "true")]
     include_declaration: Option<bool>,
-    /// `diagnostics` 与 `workspace_diagnostics` 的可选严重级别筛选
+    /// Optional severity filter for `diagnostics` and `workspace_diagnostics`
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[arg(long, value_enum, value_delimiter = ',')]
     severities: Option<Vec<DiagnosticSeverityFilter>>,
-    /// `diagnostics` 与 `workspace_diagnostics` 的可选 source 筛选
+    /// Optional source filter for `diagnostics` and `workspace_diagnostics`
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[arg(long, value_delimiter = ',')]
     sources: Option<Vec<String>>,
-    /// `diagnostics` 与 `workspace_diagnostics` 的可选诊断 code 筛选，数字 code 也按字符串匹配
+    /// Optional diagnostic code filter for `diagnostics` and `workspace_diagnostics`; numeric codes match as strings
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[arg(long, value_delimiter = ',')]
     codes: Option<Vec<String>>,
-    /// `references`、`incoming_calls` 与 `outgoing_calls` 是否包含依赖和工作区外结果，默认为 true
+    /// Include dependencies and external results in `references`, `incoming_calls`, and `outgoing_calls`; defaults to true
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[arg(long, num_args = 0..=1, default_missing_value = "true")]
     include_external: Option<bool>,
-    /// `references` 的可选路径子串筛选；使用普通 Unix 路径片段，不是 glob 或正则
+    /// Optional path substring filter for `references`; use plain Unix path fragments, not glob or regex
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[arg(long)]
     path_pattern: Option<String>,
-    /// CLI 批处理结束后清理本次请求临时创建的 buffer，不暴露给 MCP schema
+    /// Clean up temporary buffers created by this request after CLI batch processing; not included in MCP schema or CLI
     #[serde(skip_serializing_if = "Option::is_none")]
     #[schemars(skip)]
+    #[arg(skip)]
     cleanup_temporary: Option<bool>,
 }
 
 impl LspParams {
+    /// 线上使用的操作名，同时用于挑选输出格式化器
+    pub fn operation_name(&self) -> &'static str {
+        self.operation.as_str()
+    }
+
+    /// 注入命令行上的全局路由参数：实例选择与超时对每个子命令都生效
+    pub fn set_routing(&mut self, instance_id: Option<String>, timeout_ms: Option<u32>) {
+        self.instance_id = instance_id;
+        self.timeout_ms = timeout_ms;
+    }
+
+    pub fn uri(&self) -> &str {
+        &self.uri
+    }
+
+    pub fn set_uri(&mut self, uri: String) {
+        self.uri = uri;
+    }
+
+    /// 该操作是否会写入磁盘；CLI 对这些操作要求显式 `--yes`
+    pub fn writes_to_disk(&self) -> bool {
+        matches!(
+            self.operation,
+            LspOperation::FixDocument | LspOperation::CodeActionApply | LspOperation::RenameApply
+        )
+    }
+
     fn document(
         operation: LspOperation,
         uri: String,
@@ -549,8 +659,9 @@ fn fix_params(
     params
 }
 
-#[derive(Debug, Deserialize, Serialize, schemars::JsonSchema)]
+#[derive(Clone, Debug, Deserialize, Serialize, schemars::JsonSchema, clap::ValueEnum)]
 #[serde(rename_all = "lowercase")]
+#[value(rename_all = "lower")]
 enum DiagnosticSeverityFilter {
     Error,
     Warning,
@@ -558,8 +669,9 @@ enum DiagnosticSeverityFilter {
     Hint,
 }
 
-#[derive(Debug, Deserialize, Serialize, schemars::JsonSchema)]
+#[derive(Clone, Debug, Deserialize, Serialize, schemars::JsonSchema, clap::ValueEnum)]
 #[serde(rename_all = "snake_case")]
+#[value(rename_all = "snake_case")]
 enum SymbolKindFilter {
     File,
     Module,
@@ -589,9 +701,10 @@ enum SymbolKindFilter {
     TypeParameter,
 }
 
-#[derive(Debug, Deserialize, Serialize, schemars::JsonSchema)]
+#[derive(Clone, Debug, Deserialize, Serialize, schemars::JsonSchema, clap::ValueEnum)]
 #[serde(rename_all = "snake_case")]
-enum LspOperation {
+#[value(rename_all = "snake_case")]
+pub enum LspOperation {
     Definition,
     Declaration,
     TypeDefinition,

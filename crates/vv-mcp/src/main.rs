@@ -7,15 +7,16 @@ mod server;
 
 use std::{
     collections::BTreeSet,
+    io::IsTerminal,
     path::{Path, PathBuf},
 };
 
-use clap::{Parser, Subcommand};
+use clap::{CommandFactory, Parser, Subcommand};
 use ignore::WalkBuilder;
 use output::{OutputConfig, OutputFormat};
 use rmcp::{ServiceExt, transport::stdio};
 use serde_json::{Value, json};
-use server::VvMcpServer;
+use server::{EditorParams, LspParams, VvMcpServer};
 
 #[derive(Debug, Parser)]
 #[command(name = "vv-mcp", version, about)]
@@ -23,51 +24,83 @@ struct Args {
     #[command(subcommand)]
     command: Option<Command>,
 
-    /// Neovim 实例注册文件所在目录
-    #[arg(long, env = "VV_MCP_REGISTRY")]
+    /// Directory containing Neovim instance registry files
+    #[arg(long, env = "VV_MCP_REGISTRY", global = true)]
     registry: Option<PathBuf>,
 
-    /// 以 JSON 输出已发现实例并退出
+    /// List discovered instances as JSON and exit
     #[arg(long)]
     list_instances: bool,
 
-    /// 返回给 MCP 客户端的 LSP 结果格式
-    #[arg(long, env = "VV_MCP_OUTPUT_FORMAT", value_enum, default_value = "json")]
-    output_format: OutputFormat,
+    /// Result output format; defaults to markdown for commands and json for MCP server
+    #[arg(long, env = "VV_MCP_OUTPUT_FORMAT", value_enum, global = true)]
+    output_format: Option<OutputFormat>,
 
-    /// 单次请求最多返回的 LSP 结果数量
+    /// Exact Neovim instance ID when workspace roots overlap; omit for automatic routing by path
+    #[arg(long, global = true)]
+    instance_id: Option<String>,
+
+    /// Request timeout in milliseconds; defaults to 5000ms for fix, other ops use Neovim defaults
+    #[arg(long, value_parser = parse_timeout, global = true)]
+    timeout_ms: Option<u32>,
+
+    /// Maximum number of results per request
     #[arg(
         long,
         env = "VV_MCP_MAX_RESULTS",
         default_value_t = 200,
-        value_parser = parse_max_results
+        value_parser = parse_max_results,
+        global = true
     )]
     max_results: usize,
 }
 
 #[derive(Debug, Subcommand)]
+// LspParams 字段多、体积大，但 clap 的 #[command(flatten)] 无法作用于 Box<T>，这里只能内嵌
+#[allow(clippy::large_enum_variant)]
 enum Command {
-    /// 通过活动 Neovim 实例为一个文件应用可用的 LSP 修复
+    /// Apply available LSP fixes to a file through the active Neovim instance
     Fix {
-        /// 要修复的文件；相对路径基于当前目录解析
+        /// File to fix; relative paths are resolved from current directory
         path: PathBuf,
 
-        /// 工作区根目录重叠时使用的精确 Neovim 实例 ID
-        #[arg(long)]
-        instance_id: Option<String>,
-
-        /// 每次 Neovim 侧 LSP 请求的超时时间
-        #[arg(long, default_value_t = 5000)]
-        timeout_ms: u32,
-
-        /// 仅修复指定的 1-based 行；省略时修复整个文件
+        /// Fix only the specified 1-based line; omit to fix the entire file
         #[arg(long, value_parser = parse_line, conflicts_with = "all")]
         line: Option<u32>,
 
-        /// 串行修复目录下所有未被 ignore 规则排除的文件
+        /// Serially fix all files in directory not excluded by ignore rules
         #[arg(long)]
         all: bool,
     },
+
+    /// Execute an LSP operation directly; parameters are shared with the MCP `lsp` tool
+    Lsp {
+        #[command(flatten)]
+        params: LspParams,
+
+        /// Confirm execution of disk-writing operations (`fix_document`, `code_action_apply`, `rename_apply`)
+        #[arg(long)]
+        yes: bool,
+    },
+
+    /// Read live editor state from Neovim; read-only, parameters shared with the MCP `editor` tool
+    Editor {
+        #[command(flatten)]
+        params: EditorParams,
+    },
+}
+
+/// 批量修复要等语言服务器冷启动，默认给得比交互式查询宽松
+const DEFAULT_FIX_TIMEOUT_MS: u32 = 5000;
+
+fn parse_timeout(value: &str) -> Result<u32, String> {
+    let value = value
+        .parse::<u32>()
+        .map_err(|_| "timeout must be a positive integer".to_owned())?;
+    if value == 0 {
+        return Err("timeout must be greater than zero".to_owned());
+    }
+    Ok(value)
 }
 
 fn parse_max_results(value: &str) -> Result<usize, String> {
@@ -96,55 +129,41 @@ async fn main() -> anyhow::Result<()> {
     let server = VvMcpServer::new(
         args.registry,
         OutputConfig {
-            format: args.output_format,
+            format: resolve_format(args.output_format, args.command.is_some()),
             max_results: args.max_results,
         },
     )?;
 
-    if let Some(Command::Fix {
-        path,
-        instance_id,
-        timeout_ms,
-        line,
-        all,
-    }) = args.command
-    {
-        let path = absolute_path(path)?;
-        if path.is_dir() {
-            if !all {
-                anyhow::bail!("directory paths require --all");
-            }
-            let result = fix_directory(&server, &path, instance_id, timeout_ms).await?;
-            println!("{result}");
-            return Ok(());
+    // --instance-id 与 --timeout-ms 是全局选项：三个子命令都要路由到实例、都要发 RPC，
+    // 所以它们在每个子命令下都真实生效，而不是「用不上就忽略」
+    let instance_id = args.instance_id;
+    let timeout_ms = args.timeout_ms;
+
+    match args.command {
+        Some(Command::Lsp { mut params, yes }) => {
+            params.set_routing(instance_id, timeout_ms);
+            params.set_uri(cli_uri(params.uri())?);
+            return run_lsp_command(&server, params, yes).await;
         }
-        if all {
-            anyhow::bail!("--all requires a directory path");
-        }
-        if !path.is_file() {
-            anyhow::bail!(
-                "path does not exist or is not a regular file: {}",
-                path.display()
-            );
-        }
-        let uri = path.to_string_lossy().into_owned();
-        match server
-            .fix_document(uri.clone(), instance_id, timeout_ms, line)
-            .await
-        {
-            Ok(result) if result.get("error").is_none() => {
-                println!("{}", fix_success(result));
+        Some(Command::Editor { mut params }) => {
+            params.set_routing(instance_id, timeout_ms);
+            if let Some(uri) = params.uri() {
+                params.set_uri(cli_uri(uri)?);
             }
-            Ok(result) if is_unavailable(&result) => {
-                println!("{}", fix_skipped(&uri, error_code(&result)));
-            }
-            Ok(result) => anyhow::bail!("{}", result),
-            Err(error) if error.starts_with("Neovim instance not found:") => {
-                println!("{}", fix_skipped(&uri, "no_instance"));
-            }
-            Err(error) => anyhow::bail!(error),
+            return run_editor_command(&server, params).await;
         }
-        return Ok(());
+        Some(Command::Fix { path, line, all }) => {
+            return run_fix_command(
+                &server,
+                path,
+                instance_id,
+                timeout_ms.unwrap_or(DEFAULT_FIX_TIMEOUT_MS),
+                line,
+                all,
+            )
+            .await;
+        }
+        None => {}
     }
 
     if args.list_instances {
@@ -155,9 +174,123 @@ async fn main() -> anyhow::Result<()> {
         return Ok(());
     }
 
+    // 无参数即 MCP server 模式（客户端就是这么启动它的），会一直在 stdin 上等 JSON-RPC。
+    // 但人在终端里直接敲 `vv-mcp` 时 stdin 是 TTY，那种「静默卡住」毫无意义，给出帮助更有用
+    if std::io::stdin().is_terminal() {
+        Args::command().print_help()?;
+        println!(
+            "\n\nWith no subcommand and piped stdin, vv-mcp serves the MCP protocol over stdio."
+        );
+        return Ok(());
+    }
+
     let service = server.serve(stdio()).await?;
     service.waiting().await?;
 
+    Ok(())
+}
+
+/// 直接执行一次 LSP 操作：写盘操作要求显式 --yes，结果按统一输出格式渲染
+async fn run_lsp_command(server: &VvMcpServer, params: LspParams, yes: bool) -> anyhow::Result<()> {
+    if params.writes_to_disk() && !yes {
+        anyhow::bail!(
+            "{} writes to disk; pass --yes to confirm",
+            params.operation_name()
+        );
+    }
+
+    let raw = request_result(server.run_lsp(&params).await);
+    let failed = raw.get("error").is_some();
+    emit(server.format_lsp(params.operation_name(), raw), failed)
+}
+
+/// 读取一次编辑器实时状态；只读，无需确认
+async fn run_editor_command(server: &VvMcpServer, params: EditorParams) -> anyhow::Result<()> {
+    let raw = request_result(server.run_editor(&params).await);
+    let failed = raw.get("error").is_some();
+    emit(server.format_editor(params.operation_name(), raw), failed)
+}
+
+/// 命令行是给人看的，默认 markdown；MCP server 面向程序，默认 json
+/// 显式 `--output-format` 或 `VV_MCP_OUTPUT_FORMAT` 始终优先
+fn resolve_format(explicit: Option<OutputFormat>, is_command: bool) -> OutputFormat {
+    explicit.unwrap_or(if is_command {
+        OutputFormat::Markdown
+    } else {
+        OutputFormat::Json
+    })
+}
+
+/// 命令行上的路径按 cwd 解析成绝对路径，和 `fix` 子命令保持一致；
+/// `file://` URI 原样透传，交给 Neovim 侧规范化
+fn cli_uri(uri: &str) -> anyhow::Result<String> {
+    if uri.starts_with("file://") {
+        return Ok(uri.to_owned());
+    }
+    Ok(absolute_path(PathBuf::from(uri))?
+        .to_string_lossy()
+        .into_owned())
+}
+
+/// 传输层失败也折叠成统一的错误结果，交给同一套格式化渲染
+fn request_result(result: Result<Value, String>) -> Value {
+    result
+        .unwrap_or_else(|error| json!({ "error": { "code": "request_failed", "message": error } }))
+}
+
+/// 打印结果；带 error 的结果以退出码 1 结束，便于 hook 与脚本判断成败
+fn emit(rendered: String, failed: bool) -> anyhow::Result<()> {
+    println!("{rendered}");
+    if failed {
+        std::process::exit(1);
+    }
+    Ok(())
+}
+
+async fn run_fix_command(
+    server: &VvMcpServer,
+    path: PathBuf,
+    instance_id: Option<String>,
+    timeout_ms: u32,
+    line: Option<u32>,
+    all: bool,
+) -> anyhow::Result<()> {
+    let path = absolute_path(path)?;
+    if path.is_dir() {
+        if !all {
+            anyhow::bail!("directory paths require --all");
+        }
+        let result = fix_directory(server, &path, instance_id, timeout_ms).await?;
+        println!("{result}");
+        return Ok(());
+    }
+    if all {
+        anyhow::bail!("--all requires a directory path");
+    }
+    if !path.is_file() {
+        anyhow::bail!(
+            "path does not exist or is not a regular file: {}",
+            path.display()
+        );
+    }
+
+    let uri = path.to_string_lossy().into_owned();
+    match server
+        .fix_document(uri.clone(), instance_id, timeout_ms, line)
+        .await
+    {
+        Ok(result) if result.get("error").is_none() => {
+            println!("{}", fix_success(result));
+        }
+        Ok(result) if is_unavailable(&result) => {
+            println!("{}", fix_skipped(&uri, error_code(&result)));
+        }
+        Ok(result) => anyhow::bail!("{}", result),
+        Err(error) if error.starts_with("Neovim instance not found:") => {
+            println!("{}", fix_skipped(&uri, "no_instance"));
+        }
+        Err(error) => anyhow::bail!(error),
+    }
     Ok(())
 }
 
@@ -309,16 +442,98 @@ mod tests {
             "12",
         ])
         .unwrap();
+        // --timeout-ms 是全局选项，写在子命令之后同样生效
+        assert_eq!(args.timeout_ms, Some(7000));
         assert!(matches!(
             args.command,
             Some(Command::Fix {
                 path,
-                timeout_ms: 7000,
                 line: Some(12),
                 all: false,
-                ..
             }) if path == std::path::Path::new("src/main.rs")
         ));
+    }
+
+    #[test]
+    fn routes_global_flags_into_every_subcommand() {
+        // 全局选项在子命令前后都能写，且对三个子命令都真实生效
+        let before = Args::try_parse_from([
+            "vv-mcp",
+            "--instance-id",
+            "proj:1",
+            "--timeout-ms",
+            "9000",
+            "lsp",
+            "--operation",
+            "hover",
+            "--uri",
+            "/a.ts",
+        ])
+        .unwrap();
+        let after = Args::try_parse_from([
+            "vv-mcp",
+            "lsp",
+            "--operation",
+            "hover",
+            "--uri",
+            "/a.ts",
+            "--instance-id",
+            "proj:1",
+            "--timeout-ms",
+            "9000",
+        ])
+        .unwrap();
+        assert_eq!(before.instance_id.as_deref(), Some("proj:1"));
+        assert_eq!(before.instance_id, after.instance_id);
+        assert_eq!(before.timeout_ms, after.timeout_ms);
+
+        // 注入之后必须出现在线上负载里，而不是被悄悄丢掉
+        let Some(Command::Lsp { mut params, .. }) = after.command else {
+            panic!("expected the lsp subcommand");
+        };
+        params.set_routing(after.instance_id, after.timeout_ms);
+        let wire = serde_json::to_value(&params).unwrap();
+        assert_eq!(wire["instanceId"], "proj:1");
+        assert_eq!(wire["timeoutMs"], 9000);
+
+        // editor 同样接受这两个全局选项：它也要路由到实例、也要发 RPC
+        let editor = Args::try_parse_from([
+            "vv-mcp",
+            "editor",
+            "--operation",
+            "list_buffers",
+            "--instance-id",
+            "proj:1",
+            "--timeout-ms",
+            "9000",
+        ])
+        .unwrap();
+        let Some(Command::Editor { mut params }) = editor.command else {
+            panic!("expected the editor subcommand");
+        };
+        params.set_routing(editor.instance_id, editor.timeout_ms);
+        let wire = serde_json::to_value(&params).unwrap();
+        assert_eq!(wire["instanceId"], "proj:1");
+        assert_eq!(wire["timeoutMs"], 9000);
+    }
+
+    #[test]
+    fn resolves_relative_cli_paths_like_the_fix_subcommand() {
+        let cwd = std::env::current_dir().unwrap();
+        assert_eq!(
+            cli_uri("src/main.rs").unwrap(),
+            cwd.join("src/main.rs").to_string_lossy()
+        );
+        // 绝对路径与 file:// URI 原样透传
+        assert_eq!(cli_uri("/work/a.ts").unwrap(), "/work/a.ts");
+        assert_eq!(cli_uri("file:///work/a.ts").unwrap(), "file:///work/a.ts");
+    }
+
+    #[test]
+    fn rejects_zero_timeout() {
+        assert!(
+            Args::try_parse_from(["vv-mcp", "fix", "src/main.rs", "--timeout-ms", "0"]).is_err()
+        );
     }
 
     #[test]
@@ -334,6 +549,123 @@ mod tests {
             fix_skipped("/code/a.ts", error_code(&result))["changed"],
             false
         );
+    }
+
+    #[test]
+    fn parses_lsp_subcommand_from_shared_params() {
+        let args = Args::try_parse_from([
+            "vv-mcp",
+            "lsp",
+            "--operation",
+            "references",
+            "--uri",
+            "/work/a.ts",
+            "--line",
+            "42",
+            "--character",
+            "17",
+            "--include-external",
+            "false",
+        ])
+        .unwrap();
+
+        let Some(Command::Lsp { params, yes }) = args.command else {
+            panic!("expected the lsp subcommand");
+        };
+        assert_eq!(params.operation_name(), "references");
+        assert!(!params.writes_to_disk());
+        assert!(!yes);
+        // 命令行入参必须序列化成与 MCP 工具完全一致的线上负载
+        let wire = serde_json::to_value(&params).unwrap();
+        assert_eq!(wire["operation"], "references");
+        assert_eq!(wire["uri"], "/work/a.ts");
+        assert_eq!(wire["line"], 42);
+        assert_eq!(wire["includeExternal"], false);
+        assert!(wire.get("cleanupTemporary").is_none());
+    }
+
+    #[test]
+    fn flags_disk_writing_operations_for_confirmation() {
+        let writes = |operation: &str| {
+            let args =
+                Args::try_parse_from(["vv-mcp", "lsp", "--operation", operation, "--uri", "/a.ts"])
+                    .unwrap();
+            match args.command {
+                Some(Command::Lsp { params, .. }) => params.writes_to_disk(),
+                _ => panic!("expected the lsp subcommand"),
+            }
+        };
+
+        assert!(writes("fix_document"));
+        assert!(writes("code_action_apply"));
+        assert!(writes("rename_apply"));
+        assert!(!writes("hover"));
+        assert!(!writes("fix_document_preview"));
+        assert!(!writes("rename_preview"));
+    }
+
+    #[test]
+    fn rejects_unknown_lsp_operation() {
+        assert!(
+            Args::try_parse_from(["vv-mcp", "lsp", "--operation", "nope", "--uri", "/a.ts"])
+                .is_err()
+        );
+        // 内部字段不得出现在命令行
+        assert!(
+            Args::try_parse_from([
+                "vv-mcp",
+                "lsp",
+                "--operation",
+                "hover",
+                "--uri",
+                "/a.ts",
+                "--cleanup-temporary",
+                "true",
+            ])
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn defaults_to_markdown_for_commands_and_json_for_the_mcp_server() {
+        assert_eq!(resolve_format(None, true), OutputFormat::Markdown);
+        assert_eq!(resolve_format(None, false), OutputFormat::Json);
+        // 显式指定始终优先，两种模式都不例外
+        assert_eq!(
+            resolve_format(Some(OutputFormat::Json), true),
+            OutputFormat::Json
+        );
+        assert_eq!(
+            resolve_format(Some(OutputFormat::Markdown), false),
+            OutputFormat::Markdown
+        );
+    }
+
+    #[test]
+    fn parses_editor_subcommand_from_shared_params() {
+        let args = Args::try_parse_from([
+            "vv-mcp",
+            "editor",
+            "--operation",
+            "read_buffer",
+            "--uri",
+            "/work/a.ts",
+            "--start-line",
+            "10",
+            "--max-lines",
+            "50",
+        ])
+        .unwrap();
+
+        let Some(Command::Editor { params }) = args.command else {
+            panic!("expected the editor subcommand");
+        };
+        assert_eq!(params.operation_name(), "read_buffer");
+        let wire = serde_json::to_value(&params).unwrap();
+        assert_eq!(wire["operation"], "read_buffer");
+        assert_eq!(wire["startLine"], 10);
+        assert_eq!(wire["maxLines"], 50);
+        assert!(wire.get("endLine").is_none());
     }
 
     #[test]

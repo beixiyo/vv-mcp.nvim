@@ -35,11 +35,14 @@ jobs:
         with:
           version: v0.12.0
           neovim: true
-      - name: Match tag and Cargo version
+      - name: Match tag, Cargo version, and plugin version
         working-directory: vv-mcp.nvim
         run: |
           version=$(sed -n "s/^version = '\(.*\)'/\1/p" crates/vv-mcp/Cargo.toml)
           test "v$version" = "${GITHUB_REF_NAME}"
+          # 插件按 version.lua 下载对应 tag 的二进制，不同步会静默装到旧版本
+          plugin_version=$(sed -n "s/^  version = '\(.*\)',/\1/p" lua/vv-mcp/version.lua)
+          test "$plugin_version" = "$version"
       - name: Verify Rust
         working-directory: vv-mcp.nvim
         run: |
