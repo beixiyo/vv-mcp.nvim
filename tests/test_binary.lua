@@ -12,6 +12,7 @@ assert(Binary.target({ sysname = 'Linux', machine = 'aarch64' }) == 'aarch64-unk
 assert(Binary.target({ sysname = 'Linux', machine = 'x86_64' }) == 'x86_64-unknown-linux-musl')
 assert(Binary.target({ sysname = 'Windows_NT', machine = 'AMD64' }) == 'x86_64-pc-windows-msvc')
 assert(Binary.target({ sysname = 'FreeBSD', machine = 'x86_64' }) == nil)
+assert(Binary.path({}) == vim.fs.normalize(vim.fn.expand('~/.local/bin/vv-mcp')))
 
 local managed = { install_dir = tmp }
 assert(Binary.path(managed) == vim.fs.joinpath(tmp, 'vv-mcp'))

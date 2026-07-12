@@ -93,11 +93,11 @@ cargo build
 }
 ```
 
-服务端默认输出为紧凑 JSON（最多 200 条），可通过参数配置 stdio：
+服务端默认输出为紧凑 JSON（最多 200 条）。服务端默认安装在 `~/.local/bin/vv-mcp`，可通过参数配置 stdio：
 
 ```json
 {
-  "command": "/absolute/path/to/vv-mcp",
+  "command": "vv-mcp",
   "args": ["--output-format", "markdown", "--max-results", "100"]
 }
 ```
@@ -118,7 +118,13 @@ VV_MCP_MAX_RESULTS=100
 
 ## MCP 客户端设置
 
-启动 Neovim 后获取服务端路径：
+服务端路径为：
+
+```text
+~/.local/bin/vv-mcp
+```
+
+自定义 `server.install_dir` 或 `server.path` 时使用 `:VVMcpInfo` 查看实际路径：
 
 ```vim
 :VVMcpInfo
@@ -130,31 +136,23 @@ VV_MCP_MAX_RESULTS=100
 :lua print(require('vv-mcp').server_path())
 ```
 
-请使用 `:VVMcpInfo` 返回的绝对路径
-
 **Codex**
 
 ```bash
-codex mcp add vv-mcp -- /absolute/path/to/vv-mcp
+codex mcp add lsp-mcp -- vv-mcp
 ```
 
 或写入 `~/.codex/config.toml`：
 
 ```toml
-[mcp_servers.vv-mcp]
-command = "/absolute/path/to/vv-mcp"
+[mcp_servers.lsp-mcp]
+command = "vv-mcp"
 ```
 
 **Claude Code**
 
 ```bash
-claude mcp add --scope user vv-mcp -- /absolute/path/to/vv-mcp
-```
-
-**Gemini CLI**
-
-```bash
-gemini mcp add --scope user vv-mcp /absolute/path/to/vv-mcp
+claude mcp add --scope user lsp-mcp -- vv-mcp
 ```
 
 **Cursor** — `~/.cursor/mcp.json`
@@ -162,8 +160,8 @@ gemini mcp add --scope user vv-mcp /absolute/path/to/vv-mcp
 ```json
 {
   "mcpServers": {
-    "vv-mcp": {
-      "command": "/absolute/path/to/vv-mcp"
+    "lsp-mcp": {
+      "command": "vv-mcp"
     }
   }
 }
@@ -175,9 +173,9 @@ gemini mcp add --scope user vv-mcp /absolute/path/to/vv-mcp
 {
   "$schema": "https://opencode.ai/config.json",
   "mcp": {
-    "vv-mcp": {
+    "lsp-mcp": {
       "type": "local",
-      "command": ["/absolute/path/to/vv-mcp"],
+      "command": ["vv-mcp"],
       "enabled": true
     }
   }

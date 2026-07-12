@@ -18,7 +18,7 @@ local function read_binary(path)
 end
 
 local function default_install_dir()
-  return vim.fs.joinpath(vim.fn.stdpath('data'), 'vv-mcp', 'bin')
+  return vim.fs.normalize(vim.fn.expand('~/.local/bin'))
 end
 
 local function executable_name()

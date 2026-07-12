@@ -12,7 +12,7 @@ local M = {}
 
 ---@class VVMcpServerConfig
 ---@field auto_install boolean 缺失或版本不匹配时自动下载预编译二进制 @default true
----@field install_dir string? 托管二进制目录；nil 使用 stdpath('data')/vv-mcp/bin @default nil
+---@field install_dir string? 托管二进制目录；nil 使用 ~/.local/bin @default nil
 ---@field path string? 用户自行管理的 vv-mcp 绝对路径；设置后禁用自动安装 @default nil
 
 local defaults = {

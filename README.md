@@ -91,11 +91,11 @@ cargo build
 }
 ```
 
-The default server output is compact JSON with at most 200 results. Configure the stdio command through arguments:
+The default server output is compact JSON with at most 200 results. The server is installed at `~/.local/bin/vv-mcp`. Configure the stdio command through arguments:
 
 ```json
 {
-  "command": "/absolute/path/to/vv-mcp",
+  "command": "vv-mcp",
   "args": ["--output-format", "markdown", "--max-results", "100"]
 }
 ```
@@ -116,7 +116,13 @@ Positions use 1-based `line:character-line:character` strings. Truncated respons
 
 ## MCP client setup
 
-After starting Neovim, get the MCP server path:
+The default server path is:
+
+```text
+~/.local/bin/vv-mcp
+```
+
+Use `:VVMcpInfo` when `server.install_dir` or `server.path` is customized:
 
 ```vim
 :VVMcpInfo
@@ -128,31 +134,23 @@ or:
 :lua print(require('vv-mcp').server_path())
 ```
 
-Use the absolute path returned by `:VVMcpInfo`
-
 **Codex**
 
 ```bash
-codex mcp add vv-mcp -- /absolute/path/to/vv-mcp
+codex mcp add lsp-mcp -- vv-mcp
 ```
 
 or add it to `~/.codex/config.toml`:
 
 ```toml
-[mcp_servers.vv-mcp]
-command = "/absolute/path/to/vv-mcp"
+[mcp_servers.lsp-mcp]
+command = "vv-mcp"
 ```
 
 **Claude Code**
 
 ```bash
-claude mcp add --scope user vv-mcp -- /absolute/path/to/vv-mcp
-```
-
-**Gemini CLI**
-
-```bash
-gemini mcp add --scope user vv-mcp /absolute/path/to/vv-mcp
+claude mcp add --scope user lsp-mcp -- vv-mcp
 ```
 
 **Cursor** — `~/.cursor/mcp.json`
@@ -160,8 +158,8 @@ gemini mcp add --scope user vv-mcp /absolute/path/to/vv-mcp
 ```json
 {
   "mcpServers": {
-    "vv-mcp": {
-      "command": "/absolute/path/to/vv-mcp"
+    "lsp-mcp": {
+      "command": "vv-mcp"
     }
   }
 }
@@ -173,9 +171,9 @@ gemini mcp add --scope user vv-mcp /absolute/path/to/vv-mcp
 {
   "$schema": "https://opencode.ai/config.json",
   "mcp": {
-    "vv-mcp": {
+    "lsp-mcp": {
       "type": "local",
-      "command": ["/absolute/path/to/vv-mcp"],
+      "command": ["vv-mcp"],
       "enabled": true
     }
   }
