@@ -3,9 +3,10 @@
 ---遵循 workspace/willRenameFiles → WorkspaceEdit → 文件移动 →
 ---workspace/didRenameFiles 的协议顺序，并在任一写入前生成无副作用预览
 local Fs = require('vv-utils.fs')
+local FileOperations = require('vv-utils.lsp.file_operations')
 local Instance = require('vv-mcp.instance')
 local Normalize = require('vv-mcp.lsp.normalize')
-local WorkspaceEdit = require('vv-mcp.lsp.workspace_edit')
+local WorkspaceEdit = require('vv-utils.lsp.workspace_edit')
 
 local M = {}
 local transactions = {}
@@ -114,19 +115,6 @@ local function buffers_match(buffers)
   return true
 end
 
-local function rename_params(old_path, new_path)
-  return {
-    files = {{
-      oldUri = vim.uri_from_fname(old_path),
-      newUri = vim.uri_from_fname(new_path),
-    }},
-  }
-end
-
-local function supports(client, capability)
-  return vim.tbl_get(client, 'server_capabilities', 'workspace', 'fileOperations', capability) ~= nil
-end
-
 local function preview(params)
   purge_expired()
   local old_path = normalize_path(params.oldUri)
@@ -159,28 +147,9 @@ local function preview(params)
     )
   end
 
-  local edits = {}
-  local clients = {}
-  local request = rename_params(old_path, new_path)
   local timeout_ms = tonumber(params.timeoutMs) or 5000
-  for _, client in ipairs(vim.lsp.get_clients()) do
-    if supports(client, 'willRename') then
-      local response, request_error = client:request_sync(
-        'workspace/willRenameFiles', request, timeout_ms
-      )
-      if request_error then
-        return error_result('resource_rename_lsp_failed', client.name .. ': ' .. tostring(request_error))
-      end
-      clients[#clients + 1] = client.name
-      if response and response.result then
-        edits[#edits + 1] = {
-          edit = response.result,
-          encoding = client.offset_encoding or 'utf-16',
-        }
-      end
-    end
-  end
-  table.sort(clients)
+  local edits, clients, lsp_error = FileOperations.will_rename_sync(old_path, new_path, timeout_ms)
+  if not edits then return { error = lsp_error } end
 
   local workspace, workspace_error = WorkspaceEdit.prepare(edits)
   if not workspace then return { error = workspace_error } end
@@ -214,12 +183,7 @@ local function preview(params)
 end
 
 local function notify_did_rename(transaction)
-  local params = rename_params(transaction.old_path, transaction.new_path)
-  for _, client in ipairs(vim.lsp.get_clients()) do
-    if supports(client, 'didRename') then
-      client:notify('workspace/didRenameFiles', params)
-    end
-  end
+  FileOperations.notify_did_rename(transaction.old_path, transaction.new_path)
 end
 
 local function sync_resource_buffers(transaction)

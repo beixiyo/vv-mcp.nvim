@@ -44,9 +44,11 @@ local client = {
 }
 
 local original_get_client = vim.lsp.get_client_by_id
+local original_get_clients = vim.lsp.get_clients
 vim.lsp.get_client_by_id = function(id)
   return id == client.id and client or nil
 end
+vim.lsp.get_clients = function() return { client } end
 
 local function context(params)
   return {
@@ -105,6 +107,7 @@ assert(vim.iter(request_log):all(function(params)
 end), 'line fixes must not request document-wide source.fixAll actions')
 
 vim.lsp.get_client_by_id = original_get_client
+vim.lsp.get_clients = original_get_clients
 Fs.delete(tmp)
 
 print('vv-mcp code action stale test: ok')

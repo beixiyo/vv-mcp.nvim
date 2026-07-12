@@ -1,6 +1,7 @@
 ---管理 Code Action 的查询、无副作用预览和单次安全应用事务
 local Normalize = require('vv-mcp.lsp.normalize')
-local WorkspaceEdit = require('vv-mcp.lsp.workspace_edit')
+local SharedCodeActions = require('vv-utils.lsp.code_actions')
+local WorkspaceEdit = require('vv-utils.lsp.workspace_edit')
 
 local M = {}
 local transactions = {}
@@ -33,56 +34,6 @@ local function lsp_diagnostics(bufnr, line, namespace)
   return diagnostics
 end
 
-local function diagnostic_params(context, diagnostic)
-  local lsp_diagnostic = diagnostic.user_data and diagnostic.user_data.lsp
-  local range = lsp_diagnostic and lsp_diagnostic.range or {
-    start = { line = diagnostic.lnum, character = diagnostic.col },
-    ['end'] = {
-      line = diagnostic.end_lnum or diagnostic.lnum,
-      character = diagnostic.end_col or diagnostic.col,
-    },
-  }
-  return {
-    textDocument = { uri = vim.uri_from_bufnr(context.bufnr) },
-    range = range,
-    context = {
-      diagnostics = lsp_diagnostic and { lsp_diagnostic } or {},
-      only = { 'quickfix' },
-    },
-  }
-end
-
-local function client_diagnostics(context, client, line)
-  local diagnostics = {}
-  local seen = {}
-  local marker = ('lsp.%s.%d'):format(client.name, client.id)
-  local namespaces = {
-    [vim.lsp.diagnostic.get_namespace(client.id)] = true,
-  }
-
-  for name, namespace in pairs(vim.api.nvim_get_namespaces()) do
-    if name:find(marker, 1, true) then namespaces[namespace] = true end
-  end
-
-  for namespace in pairs(namespaces) do
-    local options = { namespace = namespace }
-    if type(line) == 'number' then options.lnum = line end
-
-    for _, diagnostic in ipairs(vim.diagnostic.get(context.bufnr, options)) do
-      local lsp_diagnostic = diagnostic.user_data and diagnostic.user_data.lsp
-
-      if lsp_diagnostic then
-        local fingerprint = vim.fn.sha256(vim.json.encode(lsp_diagnostic))
-        if not seen[fingerprint] then
-          seen[fingerprint] = true
-          diagnostics[#diagnostics + 1] = diagnostic
-        end
-      end
-    end
-  end
-  return diagnostics
-end
-
 local function request_params(context, whole_file)
   local last_line = math.max(vim.api.nvim_buf_line_count(context.bufnr) - 1, 0)
   local position = {
@@ -103,12 +54,6 @@ local function request_params(context, whole_file)
         or (type(context.params.actionKind) == 'string' and { context.params.actionKind } or nil),
     },
   }
-end
-
-local function fix_all_params(context)
-  local params = request_params(context, true)
-  params.context.only = { 'source.fixAll' }
-  return params
 end
 
 local function resolve_action(transaction, context)
@@ -238,63 +183,15 @@ end
 
 local function document_fix_preview(context, operation)
   purge_expired()
-  local edits = {}
-  local titles = {}
-  local clients = {}
-  local seen = {}
-
-  local function collect(client, params)
-    local collected = 0
-    local response = client:request_sync(operation.method, params, context.timeout_ms, context.bufnr)
-
-    for _, action in ipairs(response and response.result or {}) do
-      local temporary = { action = action, client_id = client.id }
-      local resolved = resolve_action(temporary, context)
-
-      if resolved and resolved.edit then
-        local fingerprint = vim.fn.sha256(vim.json.encode({
-          client = client.id,
-          edit = resolved.edit,
-        }))
-
-        if not seen[fingerprint] then
-          seen[fingerprint] = true
-          edits[#edits + 1] = {
-            edit = resolved.edit,
-            encoding = client.offset_encoding or 'utf-16',
-          }
-          titles[#titles + 1] = resolved.title or 'Untitled action'
-          clients[client.name] = true
-          collected = collected + 1
-        end
-      end
-    end
-    return collected
-  end
-
-  for _, client in ipairs(context.clients) do
-    if client:supports_method(operation.method, context.bufnr) then
-      local target_line = type(context.params.line) == 'number' and context.params.line - 1 or nil
-      local fix_all_count = target_line == nil
-          and (operation.name == 'fix_document_preview' or operation.name == 'fix_document')
-          and collect(client, fix_all_params(context))
-          or 0
-
-      if fix_all_count == 0 then
-        collect(client, request_params(context, target_line == nil))
-        for _, diagnostic in ipairs(client_diagnostics(context, client, target_line)) do
-          collect(client, diagnostic_params(context, diagnostic))
-        end
-      end
-    end
-  end
-
-  if #edits == 0 then
-    return { error = { code = 'no_quickfixes', message = 'No editable quickfix actions found' } }
-  end
-
-  local workspace_transaction, error = WorkspaceEdit.prepare(edits)
-  if not workspace_transaction then return { error = error } end
+  local collected, error = SharedCodeActions.collect_document_fixes({
+    bufnr = context.bufnr,
+    line = context.params.line,
+    character = context.params.character,
+    timeout_ms = context.timeout_ms,
+    prefer_fix_all = true,
+  })
+  if not collected then return { error = error } end
+  local workspace_transaction = collected.workspace
 
   local id = action_id(operation.name)
   local expires_at = os.time() + ttl_seconds
@@ -306,13 +203,9 @@ local function document_fix_preview(context, operation)
   return {
     operation = operation.name,
     actionId = id,
-    titles = titles,
-    actionsCount = #titles,
-    clients = (function()
-      local names = vim.tbl_keys(clients)
-      table.sort(names)
-      return names
-    end)(),
+    titles = collected.titles,
+    actionsCount = collected.actions_count,
+    clients = collected.clients,
     filesChanged = workspace_transaction.files_changed,
     editsCount = workspace_transaction.edits_count,
     expiresAt = expires_at,
