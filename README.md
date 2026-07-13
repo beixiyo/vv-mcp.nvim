@@ -1,13 +1,29 @@
+<div align="center">
+
 # vv-mcp.nvim
 
-[English](./README.md) | [中文](./README.zh-CN.md)
+English | <a href="./README.zh-CN.md">中文</a>
+
+<img src="https://raw.githubusercontent.com/beixiyo/vsc-lsp-mcp/main/docAssets/demo.webp" alt="LSP MCP demo" width="900" />
+
+Want my Neovim config? See <a href="https://github.com/beixiyo/dotfiles">dotfiles</a>.
+
+<img src="https://img.shields.io/badge/Neovim-0.10%2B-57A143?logo=neovim&logoColor=white" alt="Neovim 0.10+" />
+<img src="https://img.shields.io/badge/Lua-2C2D72?logo=lua&logoColor=white" alt="Lua" />
+<a href="https://github.com/beixiyo/vv-mcp.nvim/actions"><img src="https://img.shields.io/github/actions/workflow/status/beixiyo/vv-mcp.nvim/ci.yml?label=CI" alt="CI" /></a>
+
+</div>
 
 Expose Neovim LSP intelligence and live editor state to AI agents through the Model Context Protocol (MCP)
 
 > [!TIP]
 > **Using VSCode?** See [vsc-lsp-mcp](https://github.com/beixiyo/vsc-lsp-mcp) for the same LSP workflows
 
-![LSP MCP demo](https://raw.githubusercontent.com/beixiyo/vsc-lsp-mcp/main/docAssets/demo.webp)
+## Requirements
+
+- [vv-utils.nvim](https://github.com/beixiyo/vv-utils.nvim) — required by the Neovim client
+- One of [curl](https://github.com/curl/curl), [wget](https://github.com/mirror/wget), or [PowerShell](https://github.com/PowerShell/PowerShell) — required when installing or updating the managed prebuilt MCP server
+- A running Neovim LSP client for the language being queried — semantic operations use the LSP already attached to the buffer
 
 ## Why vv-mcp.nvim?
 

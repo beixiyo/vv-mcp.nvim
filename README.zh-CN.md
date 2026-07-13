@@ -1,13 +1,29 @@
+<div align="center">
+
 # vv-mcp.nvim
 
-[English](./README.md) | [中文](./README.zh-CN.md)
+<a href="./README.md">English</a> | 中文
+
+<img src="https://raw.githubusercontent.com/beixiyo/vsc-lsp-mcp/main/docAssets/demo.webp" alt="LSP MCP 演示" width="900" />
+
+想要我的 Neovim 配置？查看 <a href="https://github.com/beixiyo/dotfiles">dotfiles</a>
+
+<img src="https://img.shields.io/badge/Neovim-0.10%2B-57A143?logo=neovim&logoColor=white" alt="Neovim 0.10+" />
+<img src="https://img.shields.io/badge/Lua-2C2D72?logo=lua&logoColor=white" alt="Lua" />
+<a href="https://github.com/beixiyo/vv-mcp.nvim/actions"><img src="https://img.shields.io/github/actions/workflow/status/beixiyo/vv-mcp.nvim/ci.yml?label=CI" alt="CI" /></a>
+
+</div>
 
 通过 Model Context Protocol (MCP) 向 AI 代理暴露 Neovim 的 LSP 能力与实时编辑状态
 
 > [!TIP]
 > **在使用 VSCode？** 请看 [vsc-lsp-mcp](https://github.com/beixiyo/vsc-lsp-mcp) 获取同类 LSP 工作流
 
-![LSP MCP demo](https://raw.githubusercontent.com/beixiyo/vsc-lsp-mcp/main/docAssets/demo.webp)
+## 依赖
+
+- [vv-utils.nvim](https://github.com/beixiyo/vv-utils.nvim) — Neovim 客户端必须依赖
+- [curl](https://github.com/curl/curl)、[wget](https://github.com/mirror/wget) 或 [PowerShell](https://github.com/PowerShell/PowerShell) 中任意一个 — 安装或更新托管的预编译 MCP 服务端时需要
+- 当前语言已有运行中的 Neovim LSP 客户端 — 语义操作复用已附加到 buffer 的 LSP
 
 ## 为什么需要 vv-mcp.nvim
 
