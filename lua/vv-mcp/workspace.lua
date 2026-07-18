@@ -23,21 +23,27 @@ local function purge_expired()
   end
 end
 
+-- 纯字符串规范化，得到「逻辑路径」——对外 wire 协议与事务标识都用它，行为对用户稳定
 local function normalize_path(value)
   if type(value) ~= 'string' or value == '' then return nil end
   local path = value:match('^file://') and vim.uri_to_fname(value) or value
   local absolute = path:sub(1, 1) == '/' or path:match('^%a:[/\\]') ~= nil
   if not absolute then return nil end
-  path = vim.fs.normalize(path)
-  if vim.uv.fs_lstat(path) then return vim.fs.normalize(vim.fn.resolve(path)) end
-  local parent = vim.fs.normalize(vim.fn.resolve(vim.fs.dirname(path)))
-  return vim.fs.joinpath(parent, vim.fs.basename(path))
+  return vim.fs.normalize(path)
+end
+
+-- 解析路径的真实位置：只规范化父目录（跟随中间 symlink），保留最终组件本身
+-- 与 rename(2) 语义一致——中间 symlink 跟随、最终组件不跟随（操作链接本身）
+-- 用于工作区边界判定与 buffer 身份比对，堵住经内部目录 symlink 越出 workspace 的绕过
+local function real_path(path)
+  return vim.fs.joinpath(Fs.realpath(vim.fs.dirname(path)), vim.fs.basename(path))
 end
 
 local function is_inside(path, root)
-  path = vim.fs.normalize(path)
-  root = vim.fs.normalize(root):gsub('/+$', '')
-  return path == root or path:sub(1, #root + 1) == root .. '/'
+  local real = real_path(path)
+  -- root 自身可能就是 symlink，需完整解析（含最终组件），故用 Fs.realpath 而非 real_path
+  local base = Fs.realpath(root):gsub('/+$', '')
+  return real == base or real:sub(1, #base + 1) == base .. '/'
 end
 
 local function shared_root(old_path, new_path)
@@ -50,11 +56,14 @@ end
 local function stat_snapshot(path)
   local stat = vim.uv.fs_lstat(path)
   if not stat then return nil end
+  -- dev/ino 锁定 inode 身份：仅凭 type/size/mtime，被同尺寸同时间戳的文件原位替换仍会蒙混过关
   return {
     type = stat.type,
     size = stat.size,
     mtime_sec = stat.mtime.sec,
     mtime_nsec = stat.mtime.nsec,
+    dev = stat.dev,
+    ino = stat.ino,
   }
 end
 
@@ -65,22 +74,30 @@ local function stat_matches(path, expected)
     and current.size == expected.size
     and current.mtime_sec == expected.mtime_sec
     and current.mtime_nsec == expected.mtime_nsec
+    and current.dev == expected.dev
+    and current.ino == expected.ino
 end
 
+-- 按真实路径匹配：Neovim 打开逻辑路径后 buffer 名是解析后的真实路径，
+-- 逻辑 path 与真实 buffer 名直接比对会漏命中，导致已改 buffer 的保护与同步失效
 local function resource_buffers(path)
+  local prefix = real_path(path)
   local buffers = {}
   for _, bufnr in ipairs(vim.api.nvim_list_bufs()) do
     if vim.api.nvim_buf_is_loaded(bufnr) then
       local name = vim.api.nvim_buf_get_name(bufnr)
       if name ~= '' then
         local normalized = normalize_path(name)
-        if normalized and (normalized == path or normalized:sub(1, #path + 1) == path .. '/') then
-          buffers[#buffers + 1] = {
-            bufnr = bufnr,
-            path = normalized,
-            changedtick = vim.api.nvim_buf_get_changedtick(bufnr),
-            modified = vim.bo[bufnr].modified,
-          }
+        if normalized then
+          local real = real_path(normalized)
+          if real == prefix or real:sub(1, #prefix + 1) == prefix .. '/' then
+            buffers[#buffers + 1] = {
+              bufnr = bufnr,
+              path = real,
+              changedtick = vim.api.nvim_buf_get_changedtick(bufnr),
+              modified = vim.bo[bufnr].modified,
+            }
+          end
         end
       end
     end
@@ -95,8 +112,9 @@ end
 
 local function target_buffers(path)
   local buffers = resource_buffers(path)
+  local prefix = real_path(path)
   for _, state in ipairs(buffers) do
-    if state.path ~= path or state.modified or not is_empty_buffer(state.bufnr) then
+    if state.path ~= prefix or state.modified or not is_empty_buffer(state.bufnr) then
       return nil
     end
   end
@@ -105,8 +123,10 @@ end
 
 local function buffers_match(buffers)
   for _, state in ipairs(buffers) do
-    if not vim.api.nvim_buf_is_valid(state.bufnr)
-        or normalize_path(vim.api.nvim_buf_get_name(state.bufnr)) ~= state.path
+    if not vim.api.nvim_buf_is_valid(state.bufnr) then return false end
+    local normalized = normalize_path(vim.api.nvim_buf_get_name(state.bufnr))
+    if not normalized
+        or real_path(normalized) ~= state.path
         or vim.api.nvim_buf_get_changedtick(state.bufnr) ~= state.changedtick
         or vim.bo[state.bufnr].modified ~= state.modified then
       return false
@@ -160,6 +180,8 @@ local function preview(params)
   transactions[id] = {
     old_path = old_path,
     new_path = new_path,
+    real_old = real_path(old_path),
+    real_new = real_path(new_path),
     root = root,
     old_stat = old_stat,
     buffers = buffers,
@@ -187,14 +209,24 @@ local function notify_did_rename(transaction)
 end
 
 local function sync_resource_buffers(transaction)
+  -- buffer 名与后缀都以真实路径为准（见 resource_buffers），renamed 后指向真实新位置
   for _, state in ipairs(transaction.buffers) do
-    local suffix = state.path:sub(#transaction.old_path + 1)
-    local target = transaction.new_path .. suffix
+    local suffix = state.path:sub(#transaction.real_old + 1)
+    local target = transaction.real_new .. suffix
     vim.api.nvim_buf_set_name(state.bufnr, target)
     pcall(vim.api.nvim_buf_call, state.bufnr, function()
       vim.cmd('silent! doautocmd BufFilePost')
     end)
   end
+end
+
+-- preview→apply（TTL 300 秒）窗口内，中间目录可能被换成越界 symlink：preview 存下的
+-- real_old/real_new/root 已固化真实边界，apply 前后复检确保 old/new 的真实解析与所在 root 未变。
+-- FS 未变时 real_path/shared_root 幂等，正常 apply 不会被误判（含目标父目录尚不存在的场景）
+local function boundary_intact(transaction)
+  return real_path(transaction.old_path) == transaction.real_old
+    and real_path(transaction.new_path) == transaction.real_new
+    and shared_root(transaction.old_path, transaction.new_path) == transaction.root
 end
 
 local function apply(params)
@@ -214,7 +246,8 @@ local function apply(params)
   if not stat_matches(transaction.old_path, transaction.old_stat)
       or vim.uv.fs_lstat(transaction.new_path)
       or not buffers_match(transaction.buffers)
-      or not buffers_match(transaction.target_ghosts) then
+      or not buffers_match(transaction.target_ghosts)
+      or not boundary_intact(transaction) then
     transactions[id] = nil
     return error_result('resource_rename_stale', 'Source, target, or loaded buffer changed after preview')
   end
@@ -223,6 +256,14 @@ local function apply(params)
   if not workspace_applied then
     transactions[id] = nil
     return { error = workspace_error }
+  end
+
+  -- WorkspaceEdit.apply 与 Fs.rename 之间仍有可观察窗口：写入后、移动前再复检真实边界，
+  -- 越界则回滚已应用的 import 编辑，避免留下「已改引用、文件未移动」的半应用状态
+  if not boundary_intact(transaction) then
+    WorkspaceEdit.restore(transaction.workspace)
+    transactions[id] = nil
+    return error_result('resource_rename_stale', 'Source, target, or loaded buffer changed after preview')
   end
 
   local renamed, rename_error = pcall(Fs.rename, transaction.old_path, transaction.new_path)
