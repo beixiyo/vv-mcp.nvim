@@ -6,4 +6,4 @@ mod resolver;
 
 pub use model::{Instance, InstanceList};
 pub use registry::Registry;
-pub use resolver::resolve_instance;
+pub use resolver::{ResolveError, resolve_instance};

@@ -13,7 +13,13 @@ pub struct Instance {
     pub cwd: String,
     pub roots: Vec<String>,
     pub lsp_clients: Vec<String>,
+    #[serde(default = "default_kind")]
+    pub kind: String,
     pub updated_at: u64,
+}
+
+fn default_kind() -> String {
+    "interactive".into()
 }
 
 /// `list_instances` MCP 工具返回的实例集合

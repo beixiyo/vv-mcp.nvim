@@ -93,8 +93,9 @@ fn format_read_buffer(raw: Value, format: OutputFormat) -> String {
         })
         .unwrap_or_default();
 
+    let source = raw["source"].as_str().unwrap_or("buffer");
     let mut out = format!(
-        "## Buffer\n`{path}`\n- Lines {}-{} of {}{}\n\n```{filetype}\n{body}\n```",
+        "## Buffer\n`{path}`\n- Source: {source}\n- Lines {}-{} of {}{}\n\n```{filetype}\n{body}\n```",
         raw["startLine"],
         raw["endLine"],
         raw["lineCount"],

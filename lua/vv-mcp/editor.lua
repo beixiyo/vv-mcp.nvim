@@ -137,6 +137,7 @@ local function read_buffer(params)
   local shown_end = start_line + shown - 1
   local result = {
     operation = 'read_buffer',
+    source = 'buffer',
     bufferId = bufnr,
     path = Normalize.wire_path(canonical_path(path)),
     modified = vim.bo[bufnr].modified,

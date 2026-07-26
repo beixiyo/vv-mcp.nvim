@@ -21,9 +21,9 @@
 
 ## 依赖
 
-- [vv-utils.nvim](https://github.com/beixiyo/vv-utils.nvim) — Neovim 客户端必须依赖
+- [vv-utils.nvim](https://github.com/beixiyo/vv-utils.nvim) 0.3.3 或更高版本 — Neovim 客户端必须依赖
 - [curl](https://github.com/curl/curl)、[wget](https://github.com/mirror/wget) 或 [PowerShell](https://github.com/PowerShell/PowerShell) 中任意一个 — 安装或更新托管的预编译 MCP 服务端时需要
-- 当前语言已有运行中的 Neovim LSP 客户端 — 语义操作复用已附加到 buffer 的 LSP
+- 当前语言已有运行中的 Neovim LSP 客户端 — 有实例时复用；没有时为目标项目启动受管 headless Neovim
 
 ## 为什么需要 vv-mcp.nvim
 
@@ -86,27 +86,10 @@ dependency_markers 的 marker 用于过滤引用与调用链排序，默认覆�
 
 marker 使用的是标准化路径片段，不是 glob 或 Lua pattern
 
-开发 vv-mcp 本身时可覆盖服务端路径：
-
-可在仓库根目录构建调试版二进制：
+开发 vv-mcp 时，可构建并安装到默认的 `~/.local/bin/vv-mcp`：
 
 ```bash
-cargo build
-```
-
-会在 `./target/debug/vv-mcp` 生成服务端二进制
-
-```lua
-{
-  'beixiyo/vv-mcp.nvim',
-  lazy = false,
-  dependencies = { 'beixiyo/vv-utils.nvim' },
-  opts = {
-    server = {
-      path = '/absolute/path/to/vv-mcp',
-    },
-  },
-}
+./scripts/build-dev
 ```
 
 服务端默认输出为紧凑 JSON（最多 200 条）。服务端默认安装在 `~/.local/bin/vv-mcp`，可通过参数配置 stdio：
@@ -124,6 +107,10 @@ cargo build
 VV_MCP_OUTPUT_FORMAT=markdown
 VV_MCP_MAX_RESULTS=100
 ```
+
+受管 headless 实例默认空闲 15 分钟后退出。同项目的真实 Neovim 注册后，受管实例会在 15 秒交接期后优雅退出。以下正整数毫秒环境变量可覆盖默认值：`VV_MCP_MANAGED_IDLE_TIMEOUT_MS`、`VV_MCP_MANAGED_HANDOFF_DELAY_MS`、`VV_MCP_MANAGED_WATCH_INTERVAL_MS`、`VV_MCP_MANAGED_READY_TIMEOUT_MS`
+
+用 CLI 验证交接时，在 `lsp` 命令追加 `--keep-alive-ms 30000`。LSP 结果打印后进程管理器仍会保活，因此受管实例能观察到真实 Neovim 的注册
 
 可用格式：
 
@@ -237,7 +224,7 @@ vv-mcp editor --operation read_buffer --uri src/main.ts --start-line 1 --end-lin
 | `list_instances` | 列出运行中的 Neovim 项目与已挂载 LSP |
 | `resolve_instance` | 通过 `instanceId` 或绝对路径解析实例 |
 | `lsp` | 执行带筛选的 LSP 操作 |
-| `editor` | 读取实时编辑上下文、缓冲区、选区与未保存文本 |
+| `editor` | 读取实时编辑上下文、缓冲区、选区与未保存文本；`read_buffer` 无实时缓冲区时回退到已保存的磁盘文本 |
 | `workspace` | 预览并应用 LSP 感知的文件/目录重命名 |
 
 **LSP 操作分类**
@@ -318,7 +305,7 @@ rename_resource_preview
 |-----------|--------|
 | `current_context` | 当前文件、光标、模式、工作目录、窗口、Tab 与 LSP 客户端 |
 | `list_buffers` | 可编辑的已加载文件缓冲区，设置 `includeSpecial=true` 可包含插件/终端缓冲区 |
-| `read_buffer` | 单个已加载缓冲区实时文本，支持未保存改动与行范围 |
+| `read_buffer` | 单个已加载缓冲区实时文本，支持未保存改动与行范围；无实时缓冲区时返回 `source: disk` 的已保存磁盘文本 |
 | `get_selection` | 当前字符级/行级/块级选区文本及 1-based range |
 
 多实例共存时，当前状态相关操作请显式传 `instanceId`

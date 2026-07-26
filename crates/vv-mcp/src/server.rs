@@ -1,6 +1,6 @@
 //! MCP Server 定义：注册工具、生成输入 Schema，并将 LSP 请求转发给匹配的 Neovim 实例
 
-use std::{path::PathBuf, time::Duration};
+use std::{fs, path::PathBuf, time::Duration};
 
 use anyhow::Result;
 use rmcp::{
@@ -13,9 +13,11 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::{
-    instance::{Instance, InstanceList, Registry, resolve_instance},
+    instance::{Instance, InstanceList, Registry, ResolveError, resolve_instance},
+    managed::ManagedPool,
     nvim::{NvimClient, NvimError},
     output::OutputConfig,
+    uri,
 };
 
 const LSP_REQUEST: &str = "return require('vv-mcp.lsp').request(...)";
@@ -23,11 +25,13 @@ const EDITOR_REQUEST: &str = "return require('vv-mcp.editor').request(...)";
 const WORKSPACE_REQUEST: &str = "return require('vv-mcp.workspace').request(...)";
 const DEFAULT_LSP_TIMEOUT_MS: u32 = 3000;
 const RPC_TIMEOUT_MARGIN_MS: u64 = 1000;
+const MANAGED_LSP_RETRY_DELAY: Duration = Duration::from_millis(100);
 
 #[derive(Clone, Debug)]
 /// vv-mcp 服务实例，持有实例注册表与输出压缩配置
 pub struct VvMcpServer {
     registry: Registry,
+    managed: ManagedPool,
     output: OutputConfig,
 }
 
@@ -51,9 +55,19 @@ impl VvMcpServer {
         instance_id: Option<&str>,
     ) -> Result<Instance, String> {
         let instances = self.instances().await.map_err(|error| error.to_string())?;
-        resolve_instance(&instances.instances, instance_id, Some(uri))
-            .cloned()
-            .map_err(|error| error.to_string())
+        match resolve_instance(&instances.instances, instance_id, Some(uri)).cloned() {
+            Ok(instance) => {
+                self.managed.touch(&instance).await;
+                Ok(instance)
+            }
+            Err(error)
+                if instance_id.is_none()
+                    && error.to_string().starts_with("Neovim instance not found:") =>
+            {
+                self.managed.ensure(uri).await
+            }
+            Err(error) => Err(error.to_string()),
+        }
     }
 
     /// 通过已经固定的 Neovim socket 修复文档，不在文件之间重新解析注册表
@@ -70,8 +84,10 @@ impl VvMcpServer {
     }
 
     pub fn new(registry: Option<PathBuf>, output: OutputConfig) -> Result<Self> {
+        let registry = Registry::new(registry)?;
         Ok(Self {
-            registry: Registry::new(registry)?,
+            managed: ManagedPool::new(registry.clone()),
+            registry,
             output,
         })
     }
@@ -80,7 +96,13 @@ impl VvMcpServer {
         self.registry.list().await
     }
 
-    #[tool(description = "List running Neovim project instances available for LSP requests.")]
+    pub async fn shutdown(&self) {
+        self.managed.shutdown().await;
+    }
+
+    #[tool(
+        description = "Inspect currently registered Neovim instances. This is informational only: an empty result does not mean LSP is unavailable. Call lsp with uri to reuse a matching instance or automatically start a managed headless instance."
+    )]
     async fn list_instances(&self) -> String {
         match self.instances().await {
             Ok(instances) => serde_json::to_string(&instances).unwrap_or_else(|error| {
@@ -145,7 +167,7 @@ SAFE WRITE FLOWS
 - Specific fix: code_actions -> code_action_preview(actionId) -> code_action_apply(actionId).
 - Fix a document: fix_document_preview -> code_action_apply(actionId). It prefers each LSP's source.fixAll and falls back to diagnostic quick fixes.
 
-Preview operations never modify files. Apply operations save to disk and reject stale, expired, reused, or overlapping edits. Command-only code actions are not executed. List results are compact and limited by max-results."#
+When no matching Neovim is running, the server starts one managed headless instance for the target project and reuses it until its idle timeout. Preview operations never modify files. Apply operations save to disk and reject stale, expired, reused, or overlapping edits. Command-only code actions are not executed. List results are compact and limited by max-results."#
     )]
     async fn lsp(&self, Parameters(params): Parameters<LspParams>) -> String {
         match self.run_lsp(&params).await {
@@ -168,10 +190,10 @@ Preview operations never modify files. Apply operations save to disk and reject 
 OPERATIONS
 - current_context: current buffer, cursor, mode, cwd, window, tab, filetype, modified state, and attached LSP clients. Pass instanceId.
 - list_buffers: editable loaded file buffers with visibility, modified state, line count, filetype, and attached LSP clients. Pass instanceId; set includeSpecial=true to include plugin, terminal, help, and other special buffers.
-- read_buffer: read live buffer text, including unsaved changes. Pass uri; startLine/endLine are optional 1-based inclusive bounds. maxLines defaults to 200.
+- read_buffer: read live buffer text, including unsaved changes. If no matching live buffer exists, read the saved file from disk and return source=disk. Pass uri; startLine/endLine are optional 1-based inclusive bounds. maxLines defaults to 200.
 - get_selection: current Visual, Visual Line, or Visual Block selection with 1-based range and selected text. Pass instanceId.
 
-Use list_instances first when more than one Neovim project is running. read_buffer can route automatically by uri; current-state operations require instanceId because they have no file path to disambiguate. This tool is read-only."#
+read_buffer can route automatically by uri; current-state operations require instanceId because they have no file path to disambiguate. list_instances is informational, not a prerequisite: read_buffer falls back to disk when no instance exists. This tool is read-only."#
     )]
     async fn editor(&self, Parameters(params): Parameters<EditorParams>) -> String {
         let raw = match self.run_editor(&params).await {
@@ -230,25 +252,54 @@ impl VvMcpServer {
     }
 
     pub async fn run_lsp(&self, params: &LspParams) -> Result<Value, String> {
-        let mut last_error = None;
+        let mut retried_stale_instance = false;
+        let mut managed_deadline = None;
 
-        for attempt in 0..2 {
+        loop {
             let instance = self.select_instance(params).await?;
+            if instance.kind == "managed" && managed_deadline.is_none() {
+                managed_deadline = Some(tokio::time::Instant::now() + self.managed.ready_timeout());
+            }
             match self.request_lsp(&instance, params).await {
+                Ok(result)
+                    if instance.kind == "managed"
+                        && result["error"]["code"].as_str() == Some("no_lsp") =>
+                {
+                    let Some(deadline) = managed_deadline else {
+                        return Ok(result);
+                    };
+                    let now = tokio::time::Instant::now();
+                    if now >= deadline {
+                        return Ok(result);
+                    }
+                    tokio::time::sleep(MANAGED_LSP_RETRY_DELAY.min(deadline - now)).await;
+                }
                 Ok(result) => return Ok(result),
-                Err(error) if attempt == 0 && error.proves_instance_is_stale() => {
-                    last_error = Some(error.to_string());
+                Err(error) if !retried_stale_instance && error.proves_instance_is_stale() => {
+                    retried_stale_instance = true;
                 }
                 Err(error) => return Err(error.to_string()),
             }
         }
-
-        Err(last_error.unwrap_or_else(|| "Neovim instance became unavailable".into()))
     }
 
     async fn select_instance(&self, params: &LspParams) -> Result<Instance, String> {
-        self.resolve_active_instance(&params.uri, params.instance_id.as_deref())
+        match self
+            .resolve_active_instance(&params.uri, params.instance_id.as_deref())
             .await
+        {
+            Ok(instance) => {
+                self.managed.touch(&instance).await;
+                Ok(instance)
+            }
+            Err(error)
+                if params.instance_id.is_none()
+                    && error.starts_with("Neovim instance not found:") =>
+            {
+                self.managed.ensure(&params.uri).await
+            }
+            Err(error) => Err(error),
+        }
     }
 
     async fn request_lsp(
@@ -266,6 +317,9 @@ impl VvMcpServer {
     }
 
     pub async fn run_editor(&self, params: &EditorParams) -> Result<Value, String> {
+        if params.is_read_buffer() {
+            return self.run_read_buffer(params).await;
+        }
         let mut last_error = None;
         for attempt in 0..2 {
             let instances = self.instances().await.map_err(|error| error.to_string())?;
@@ -299,6 +353,37 @@ impl VvMcpServer {
         Err(last_error.unwrap_or_else(|| "Neovim instance became unavailable".into()))
     }
 
+    async fn run_read_buffer(&self, params: &EditorParams) -> Result<Value, String> {
+        let instances = self.instances().await.map_err(|error| error.to_string())?;
+        let instance = resolve_instance(
+            &instances.instances,
+            params.instance_id.as_deref(),
+            params.uri.as_deref(),
+        )
+        .cloned();
+        let instance = match instance {
+            Ok(instance) => instance,
+            Err(ResolveError::NotFound(_)) if params.instance_id.is_none() => {
+                return read_file(params);
+            }
+            Err(error) => return Err(error.to_string()),
+        };
+        let mut client = match NvimClient::connect(&instance.socket).await {
+            Ok(client) => client,
+            Err(error) if error.proves_instance_is_stale() => return read_file(params),
+            Err(error) => return Err(error.to_string()),
+        };
+        let value = serde_json::to_value(params).map_err(|error| error.to_string())?;
+        let result: Value = client
+            .exec_lua_with_timeout(EDITOR_REQUEST, vec![value], rpc_timeout(params.timeout_ms))
+            .await
+            .map_err(|error| error.to_string())?;
+        if result["error"]["code"].as_str() == Some("buffer_not_loaded") {
+            return read_file(params);
+        }
+        Ok(result)
+    }
+
     async fn run_workspace(&self, params: &WorkspaceParams) -> Result<Value, String> {
         params.validate()?;
         let instances = self.instances().await.map_err(|error| error.to_string())?;
@@ -318,6 +403,57 @@ impl VvMcpServer {
             .await
             .map_err(|error| error.to_string())
     }
+}
+
+fn read_file(params: &EditorParams) -> Result<Value, String> {
+    let uri = params
+        .uri
+        .as_deref()
+        .ok_or_else(|| "uri is required for read_buffer".to_owned())?;
+    let path = fs::canonicalize(uri::native_path(uri)?).map_err(|error| error.to_string())?;
+    let content = fs::read_to_string(&path).map_err(|error| error.to_string())?;
+    let mut lines = content
+        .split('\n')
+        .map(|line| line.trim_end_matches('\r'))
+        .collect::<Vec<_>>();
+    if content.ends_with('\n') {
+        lines.pop();
+    }
+    if lines.is_empty() {
+        lines.push("");
+    }
+    let line_count = lines.len();
+    let start_line = params.start_line.unwrap_or(1) as usize;
+    let end_line = params.end_line.unwrap_or(line_count as u32) as usize;
+    let max_lines = params.max_lines.unwrap_or(200) as usize;
+    if start_line == 0 || end_line == 0 || start_line > end_line {
+        return Err("startLine and endLine must form a valid 1-based range".into());
+    }
+    if max_lines == 0 {
+        return Err("maxLines must be positive".into());
+    }
+    if start_line > line_count {
+        return Err("startLine exceeds the file line count".into());
+    }
+    let requested_end = end_line.min(line_count);
+    let shown_end = (start_line + max_lines - 1).min(requested_end);
+    let mut result = serde_json::json!({
+        "operation": "read_buffer",
+        "source": "disk",
+        "path": path,
+        "modified": false,
+        "filetype": "",
+        "lineCount": line_count,
+        "startLine": start_line,
+        "endLine": shown_end,
+        "lines": &lines[start_line - 1..shown_end],
+    });
+    let requested = requested_end - start_line + 1;
+    let shown = shown_end - start_line + 1;
+    if shown < requested {
+        result["truncated"] = serde_json::json!({ "shown": shown, "total": requested });
+    }
+    Ok(result)
 }
 
 fn rpc_timeout(timeout_ms: Option<u32>) -> Duration {
@@ -393,6 +529,10 @@ impl EditorParams {
 
     pub fn set_uri(&mut self, uri: String) {
         self.uri = Some(uri);
+    }
+
+    fn is_read_buffer(&self) -> bool {
+        matches!(self.operation, EditorOperation::ReadBuffer)
     }
 }
 
@@ -783,6 +923,58 @@ mod tests {
     fn rpc_timeout_exceeds_inner_lsp_timeout() {
         assert_eq!(rpc_timeout(None), Duration::from_millis(4000));
         assert_eq!(rpc_timeout(Some(7500)), Duration::from_millis(8500));
+    }
+
+    #[test]
+    fn reads_saved_file_when_no_live_buffer_exists() {
+        let path = std::env::temp_dir().join(format!("vv-mcp-read-file-{}", std::process::id()));
+        std::fs::write(&path, "one\r\ntwo\r\nthree\r\n").unwrap();
+        let mut params = EditorParams {
+            operation: EditorOperation::ReadBuffer,
+            instance_id: None,
+            timeout_ms: None,
+            uri: Some(path.to_string_lossy().into_owned()),
+            start_line: Some(2),
+            end_line: Some(3),
+            max_lines: None,
+            include_special: None,
+        };
+        let result = read_file(&params).unwrap();
+        assert_eq!(result["source"], "disk");
+        assert_eq!(result["lines"], serde_json::json!(["two", "three"]));
+
+        std::fs::write(&path, "").unwrap();
+        params.start_line = None;
+        params.end_line = None;
+        let empty = read_file(&params).unwrap();
+        assert_eq!(empty["lineCount"], 1);
+        assert_eq!(empty["lines"], serde_json::json!([""]));
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[tokio::test]
+    async fn does_not_fall_back_to_disk_for_an_explicit_missing_instance() {
+        let fixture =
+            std::env::temp_dir().join(format!("vv-mcp-explicit-instance-{}", std::process::id()));
+        std::fs::create_dir_all(&fixture).unwrap();
+        let path = fixture.join("main.rs");
+        std::fs::write(&path, "fn main() {}\n").unwrap();
+        let server =
+            VvMcpServer::new(Some(fixture.join("registry")), OutputConfig::default()).unwrap();
+        let result = server
+            .run_editor(&EditorParams {
+                operation: EditorOperation::ReadBuffer,
+                instance_id: Some("missing:1".into()),
+                timeout_ms: None,
+                uri: Some(path.to_string_lossy().into_owned()),
+                start_line: None,
+                end_line: None,
+                max_lines: None,
+                include_special: None,
+            })
+            .await;
+        assert_eq!(result.unwrap_err(), "Neovim instance not found: missing:1");
+        std::fs::remove_dir_all(fixture).unwrap();
     }
 
     #[test]

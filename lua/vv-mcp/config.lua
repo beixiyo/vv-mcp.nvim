@@ -17,7 +17,7 @@ local M = {}
 
 local defaults = {
   enabled = true,
-  registry_dir = nil,
+  registry_dir = vim.env.VV_MCP_REGISTRY ~= '' and vim.env.VV_MCP_REGISTRY or nil,
   refresh_events = { 'FocusGained', 'DirChanged', 'LspAttach', 'LspDetach' },
   server = {
     auto_install = true,

@@ -1,9 +1,11 @@
 //! vv-mcp 命令行入口：读取运行配置并通过 stdio 启动 MCP Server
 
 mod instance;
+mod managed;
 mod nvim;
 mod output;
 mod server;
+mod uri;
 
 use std::{
     collections::BTreeSet,
@@ -81,6 +83,10 @@ enum Command {
         /// Confirm execution of disk-writing operations (`fix_document`, `code_action_apply`, `rename_apply`)
         #[arg(long)]
         yes: bool,
+
+        /// Keep the managed Neovim lifecycle alive after the request; useful for diagnosing managed-instance handoff
+        #[arg(long, value_parser = parse_keep_alive)]
+        keep_alive_ms: Option<u64>,
     },
 
     /// Read live editor state from Neovim; read-only, parameters shared with the MCP `editor` tool
@@ -99,6 +105,16 @@ fn parse_timeout(value: &str) -> Result<u32, String> {
         .map_err(|_| "timeout must be a positive integer".to_owned())?;
     if value == 0 {
         return Err("timeout must be greater than zero".to_owned());
+    }
+    Ok(value)
+}
+
+fn parse_keep_alive(value: &str) -> Result<u64, String> {
+    let value = value
+        .parse::<u64>()
+        .map_err(|_| "keep-alive-ms must be a positive integer".to_owned())?;
+    if value == 0 {
+        return Err("keep-alive-ms must be greater than zero".to_owned());
     }
     Ok(value)
 }
@@ -140,20 +156,28 @@ async fn main() -> anyhow::Result<()> {
     let timeout_ms = args.timeout_ms;
 
     match args.command {
-        Some(Command::Lsp { mut params, yes }) => {
+        Some(Command::Lsp {
+            mut params,
+            yes,
+            keep_alive_ms,
+        }) => {
             params.set_routing(instance_id, timeout_ms);
             params.set_uri(cli_uri(params.uri())?);
-            return run_lsp_command(&server, params, yes).await;
+            let result = run_lsp_command(&server, params, yes, keep_alive_ms).await;
+            server.shutdown().await;
+            return result;
         }
         Some(Command::Editor { mut params }) => {
             params.set_routing(instance_id, timeout_ms);
             if let Some(uri) = params.uri() {
                 params.set_uri(cli_uri(uri)?);
             }
-            return run_editor_command(&server, params).await;
+            let result = run_editor_command(&server, params).await;
+            server.shutdown().await;
+            return result;
         }
         Some(Command::Fix { path, line, all }) => {
-            return run_fix_command(
+            let result = run_fix_command(
                 &server,
                 path,
                 instance_id,
@@ -162,6 +186,8 @@ async fn main() -> anyhow::Result<()> {
                 all,
             )
             .await;
+            server.shutdown().await;
+            return result;
         }
         None => {}
     }
@@ -191,7 +217,12 @@ async fn main() -> anyhow::Result<()> {
 }
 
 /// 直接执行一次 LSP 操作：写盘操作要求显式 --yes，结果按统一输出格式渲染
-async fn run_lsp_command(server: &VvMcpServer, params: LspParams, yes: bool) -> anyhow::Result<()> {
+async fn run_lsp_command(
+    server: &VvMcpServer,
+    params: LspParams,
+    yes: bool,
+    keep_alive_ms: Option<u64>,
+) -> anyhow::Result<()> {
     if params.writes_to_disk() && !yes {
         anyhow::bail!(
             "{} writes to disk; pass --yes to confirm",
@@ -201,7 +232,11 @@ async fn run_lsp_command(server: &VvMcpServer, params: LspParams, yes: bool) -> 
 
     let raw = request_result(server.run_lsp(&params).await);
     let failed = raw.get("error").is_some();
-    emit(server.format_lsp(params.operation_name(), raw), failed)
+    emit(server.format_lsp(params.operation_name(), raw), failed)?;
+    if let Some(milliseconds) = keep_alive_ms {
+        tokio::time::sleep(std::time::Duration::from_millis(milliseconds)).await;
+    }
+    Ok(())
 }
 
 /// 读取一次编辑器实时状态；只读，无需确认
@@ -569,12 +604,18 @@ mod tests {
         ])
         .unwrap();
 
-        let Some(Command::Lsp { params, yes }) = args.command else {
+        let Some(Command::Lsp {
+            params,
+            yes,
+            keep_alive_ms,
+        }) = args.command
+        else {
             panic!("expected the lsp subcommand");
         };
         assert_eq!(params.operation_name(), "references");
         assert!(!params.writes_to_disk());
         assert!(!yes);
+        assert_eq!(keep_alive_ms, None);
         // 命令行入参必须序列化成与 MCP 工具完全一致的线上负载
         let wire = serde_json::to_value(&params).unwrap();
         assert_eq!(wire["operation"], "references");
@@ -621,6 +662,42 @@ mod tests {
                 "/a.ts",
                 "--cleanup-temporary",
                 "true",
+            ])
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn parses_positive_lsp_keep_alive() {
+        let args = Args::try_parse_from([
+            "vv-mcp",
+            "lsp",
+            "--operation",
+            "document_symbols",
+            "--uri",
+            "/a.rs",
+            "--keep-alive-ms",
+            "30000",
+        ])
+        .unwrap();
+        let Some(Command::Lsp {
+            keep_alive_ms: Some(milliseconds),
+            ..
+        }) = args.command
+        else {
+            panic!("expected lsp keep-alive option");
+        };
+        assert_eq!(milliseconds, 30_000);
+        assert!(
+            Args::try_parse_from([
+                "vv-mcp",
+                "lsp",
+                "--operation",
+                "document_symbols",
+                "--uri",
+                "/a.rs",
+                "--keep-alive-ms",
+                "0",
             ])
             .is_err()
         );

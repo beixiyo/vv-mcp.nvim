@@ -41,13 +41,16 @@ pub fn resolve_instance<'a>(
         })
         .collect::<Vec<_>>();
 
-    matches.sort_by_key(|(_, length)| std::cmp::Reverse(*length));
+    matches
+        .sort_by_key(|(instance, length)| (std::cmp::Reverse(*length), instance.kind == "managed"));
     let Some((selected, selected_length)) = matches.first().copied() else {
         return Err(ResolveError::NotFound(target));
     };
     let tied = matches
         .iter()
-        .take_while(|(_, length)| *length == selected_length)
+        .take_while(|(instance, length)| {
+            *length == selected_length && instance.kind == selected.kind
+        })
         .map(|(instance, _)| instance.instance_id.as_str())
         .collect::<Vec<_>>();
     if tied.len() > 1 {
@@ -58,7 +61,11 @@ pub fn resolve_instance<'a>(
 }
 
 fn normalize_wire_path(input: &str) -> String {
-    let input = input.strip_prefix("file://").unwrap_or(input);
+    let native = crate::uri::native_path(input).ok();
+    let input = native
+        .as_deref()
+        .and_then(|path| path.to_str())
+        .unwrap_or_else(|| input.strip_prefix("file://").unwrap_or(input));
     if looks_windows(input) {
         Utf8WindowsPath::new(input)
             .normalize()
@@ -114,12 +121,40 @@ mod tests {
     }
 
     #[test]
+    fn decodes_file_uri_before_matching_workspace() {
+        let instances = vec![fixture("encoded", "/tmp/my project")];
+        assert_eq!(
+            resolve_instance(
+                &instances,
+                None,
+                Some("file:///tmp/my%20project/src/main.rs")
+            )
+            .unwrap()
+            .instance_id,
+            "encoded"
+        );
+    }
+
+    #[test]
     fn reports_ambiguous_same_project_instances() {
         let instances = vec![fixture("one", "/code/app"), fixture("two", "/code/app")];
         assert!(matches!(
             resolve_instance(&instances, None, Some("/code/app/main.rs")),
             Err(ResolveError::Ambiguous(_))
         ));
+    }
+
+    #[test]
+    fn prefers_interactive_instance_over_managed_instance_at_same_root() {
+        let interactive = fixture("interactive", "/code/app");
+        let mut managed = fixture("managed", "/code/app");
+        managed.kind = "managed".into();
+        assert_eq!(
+            resolve_instance(&[managed, interactive], None, Some("/code/app/main.rs"))
+                .unwrap()
+                .instance_id,
+            "interactive"
+        );
     }
 
     fn fixture(id: &str, root: &str) -> Instance {
@@ -131,6 +166,7 @@ mod tests {
             cwd: root.into(),
             roots: vec![root.into()],
             lsp_clients: Vec::new(),
+            kind: "interactive".into(),
             updated_at: 1,
         }
     }

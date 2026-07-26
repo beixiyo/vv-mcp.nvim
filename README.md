@@ -21,9 +21,9 @@ Expose Neovim LSP intelligence and live editor state to AI agents through the Mo
 
 ## Requirements
 
-- [vv-utils.nvim](https://github.com/beixiyo/vv-utils.nvim) — required by the Neovim client
+- [vv-utils.nvim](https://github.com/beixiyo/vv-utils.nvim) 0.3.3 or newer — required by the Neovim client
 - One of [curl](https://github.com/curl/curl), [wget](https://github.com/mirror/wget), or [PowerShell](https://github.com/PowerShell/PowerShell) — required when installing or updating the managed prebuilt MCP server
-- A running Neovim LSP client for the language being queried — semantic operations use the LSP already attached to the buffer
+- A running Neovim LSP client for the language being queried — semantic operations reuse it when available, otherwise start a managed headless Neovim for the target project
 
 ## Why vv-mcp.nvim?
 
@@ -86,25 +86,10 @@ Override the complete marker list when a project uses custom dependency paths:
 
 Markers are normalized path substrings, not glob or Lua patterns
 
-Use a custom server binary when developing vv-mcp itself:
-
-It builds a debug binary at `./target/debug/vv-mcp`:
+Build and install the development binary at the default `~/.local/bin/vv-mcp` path:
 
 ```bash
-cargo build
-```
-
-```lua
-{
-  'beixiyo/vv-mcp.nvim',
-  lazy = false,
-  dependencies = { 'beixiyo/vv-utils.nvim' },
-  opts = {
-    server = {
-      path = '/absolute/path/to/vv-mcp',
-    },
-  },
-}
+./scripts/build-dev
 ```
 
 The default server output is compact JSON with at most 200 results. The server is installed at `~/.local/bin/vv-mcp`. Configure the stdio command through arguments:
@@ -122,6 +107,10 @@ or environment variables:
 VV_MCP_OUTPUT_FORMAT=markdown
 VV_MCP_MAX_RESULTS=100
 ```
+
+Managed headless instances stop after 15 idle minutes. When an interactive Neovim registers for the same project, the managed instance gracefully exits after a 15-second handoff. These positive-millisecond environment variables override the defaults: `VV_MCP_MANAGED_IDLE_TIMEOUT_MS`, `VV_MCP_MANAGED_HANDOFF_DELAY_MS`, `VV_MCP_MANAGED_WATCH_INTERVAL_MS`, and `VV_MCP_MANAGED_READY_TIMEOUT_MS`.
+
+For a CLI handoff check, add `--keep-alive-ms 30000` to an `lsp` command. It keeps the process manager alive after printing the result, so its managed instance can observe an interactive Neovim registration.
 
 Available formats:
 
@@ -235,7 +224,7 @@ Run `vv-mcp <subcommand> --help` for the full list of operations and flags. A fe
 | `list_instances` | List running Neovim projects and attached LSP clients |
 | `resolve_instance` | Resolve an instance from an `instanceId` or absolute path |
 | `lsp` | Execute a filtered LSP operation |
-| `editor` | Read live Neovim context, buffers, selections, and unsaved text |
+| `editor` | Read live Neovim context, buffers, selections, and unsaved text; `read_buffer` falls back to saved disk text when unavailable |
 | `workspace` | Preview and apply LSP-aware file or directory renames |
 
 **LSP operations**
@@ -316,7 +305,7 @@ The read-only `editor` tool exposes state that may differ from files on disk:
 |-----------|--------|
 | `current_context` | Current file, cursor, mode, working directory, window, tab, and attached LSP clients |
 | `list_buffers` | Editable loaded file buffers; pass `includeSpecial=true` to include plugin and terminal buffers |
-| `read_buffer` | Live text from one loaded buffer, including unsaved changes and optional line ranges |
+| `read_buffer` | Live text from one loaded buffer, including unsaved changes and optional line ranges; returns saved disk text with `source: disk` when no live buffer is available |
 | `get_selection` | Current character, line, or block Visual selection with text and a 1-based range |
 
 Use an explicit `instanceId` for current-state operations when several Neovim instances are running

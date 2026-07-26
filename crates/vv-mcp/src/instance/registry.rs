@@ -150,6 +150,7 @@ mod tests {
           "cwd": "/tmp/project",
           "roots": ["/tmp/project"],
           "lspClients": ["test-lsp"],
+          "kind": "interactive",
           "updatedAt": updated_at,
         })
         .to_string()

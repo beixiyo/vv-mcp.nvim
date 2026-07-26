@@ -1,5 +1,14 @@
 # 更新日志
 
+## 0.3.1 - 2026-07-26
+
+- `read_buffer` 在没有实时 buffer 或没有运行中的 Neovim 时回退读取已保存的磁盘文本，并标注 `source: disk`
+- LSP 请求没有匹配的 Neovim 时按 Git 优先、语言 manifest 回退的项目根启动受管 headless 实例；实例空闲 15 分钟后回收
+- 同项目真实 Neovim 注册后，受管实例在可配置的交接期后优雅退出，避免重复保留 LSP 进程
+- CLI 的 `lsp --keep-alive-ms` 可保留受管生命周期以诊断实例交接；普通 CLI 请求退出时回收其托管子进程
+- 受管实例注册失败时立即回收，注册成功后继续等待 LSP 就绪；退出时清理子进程与 socket
+- `read_buffer` 保留显式实例路由错误，并支持带百分号编码的本地 `file://` URI
+
 ## 0.3.0
 
 - 添加 `vv-mcp fix <path> [--line <number>]` 用于基于命令的钩子，应用并保存安全的 LSP 修复

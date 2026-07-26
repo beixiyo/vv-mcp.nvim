@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_dir=$(cd "$(dirname "$0")/.." && pwd)
+install_dir="$HOME/.local/bin"
+
+cd "$repo_dir"
+cargo build --locked
+
+mkdir -p "$install_dir"
+install -m 755 target/debug/vv-mcp "$install_dir/vv-mcp"
+
+printf 'Installed dev vv-mcp at %s\n' "$install_dir/vv-mcp"

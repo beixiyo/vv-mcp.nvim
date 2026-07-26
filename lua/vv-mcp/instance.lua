@@ -56,6 +56,7 @@ end
 ---@field cwd string
 ---@field roots string[]
 ---@field lspClients string[]
+---@field kind 'interactive'|'managed'
 ---@field updatedAt integer
 
 ---@return VVMcpInstance
@@ -75,6 +76,7 @@ function M.current()
     cwd = cwd,
     roots = collect_roots(root),
     lspClients = collect_clients(),
+    kind = vim.env.VV_MCP_MANAGED == '1' and 'managed' or 'interactive',
     updatedAt = os.time(),
   }
 end
