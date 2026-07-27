@@ -21,6 +21,21 @@ local root_is_absolute = data.roots[1]:sub(1, 1) == '/'
 assert(root_is_absolute, 'registry roots should use absolute paths')
 assert(not data.projectId:match('^%.%-'), 'project id should use the absolute root basename')
 
+local original_get_clients = vim.lsp.get_clients
+vim.lsp.get_clients = function()
+  return {{
+    name = 'fixture-lsp',
+    workspace_folders = {{
+      uri = vim.uri_from_fname(vim.fs.joinpath(vim.fn.tempname(), 'unrelated-project')),
+    }},
+  }}
+end
+local isolated = Instance.current()
+local expected_root = require('vv-utils.path').find_root(isolated.cwd) or isolated.cwd
+assert(vim.deep_equal(isolated.roots, { expected_root }),
+  'LSP workspace folders must not expand the instance project scope')
+vim.lsp.get_clients = original_get_clients
+
 local invalid = require('vv-mcp.lsp').request({
   operation = 'definition',
   uri = '/tmp/example.lua',

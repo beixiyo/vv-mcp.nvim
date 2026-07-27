@@ -21,7 +21,7 @@ Expose Neovim LSP intelligence and live editor state to AI agents through the Mo
 
 ## Requirements
 
-- [vv-utils.nvim](https://github.com/beixiyo/vv-utils.nvim) 0.3.3 or newer — required by the Neovim client
+- [vv-utils.nvim](https://github.com/beixiyo/vv-utils.nvim) 0.4.0 or newer — required by the Neovim client
 - One of [curl](https://github.com/curl/curl), [wget](https://github.com/mirror/wget), or [PowerShell](https://github.com/PowerShell/PowerShell) — required when installing or updating the managed prebuilt MCP server
 - A running Neovim LSP client for the language being queried — semantic operations reuse it when available, otherwise start a managed headless Neovim for the target project
 

@@ -123,7 +123,7 @@ function M.create(params, operation)
           path = Normalize.wire_path(path),
         }
       end
-      if not Fix.supports_path(path) then
+      if not Fix.check_path_support(path) then
         return nil, {
           code = 'no_lsp',
           message = 'No enabled LSP configuration matches the document filetype',

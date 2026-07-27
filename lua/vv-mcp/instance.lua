@@ -12,28 +12,6 @@ local function project_name(root)
   return name ~= '' and name or 'project'
 end
 
----@param fallback string
----@return string[]
-local function collect_roots(fallback)
-  local seen = { [fallback] = true }
-  local roots = { fallback }
-  for _, client in ipairs(vim.lsp.get_clients()) do
-    local workspace_folders = client.workspace_folders or {}
-    for _, folder in ipairs(workspace_folders) do
-      local path = folder.uri and vim.uri_to_fname(folder.uri) or nil
-      if path then
-        path = vim.fs.normalize(path)
-        if not seen[path] then
-          seen[path] = true
-          roots[#roots + 1] = path
-        end
-      end
-    end
-  end
-  table.sort(roots)
-  return roots
-end
-
 ---@return string[]
 local function collect_clients()
   local seen = {}
@@ -62,7 +40,7 @@ end
 ---@return VVMcpInstance
 function M.current()
   local cwd = vim.fs.normalize(vim.fn.getcwd())
-  local detected_root = Path.get_root() or cwd
+  local detected_root = Path.find_root(cwd) or cwd
   local root = vim.fs.normalize(vim.fn.fnamemodify(detected_root, ':p'))
   local pid = vim.fn.getpid()
   pinned_project_id = pinned_project_id
@@ -74,7 +52,7 @@ function M.current()
     pid = pid,
     socket = vim.v.servername,
     cwd = cwd,
-    roots = collect_roots(root),
+    roots = { root },
     lspClients = collect_clients(),
     kind = vim.env.VV_MCP_MANAGED == '1' and 'managed' or 'interactive',
     updatedAt = os.time(),

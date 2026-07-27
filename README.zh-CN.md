@@ -21,7 +21,7 @@
 
 ## 依赖
 
-- [vv-utils.nvim](https://github.com/beixiyo/vv-utils.nvim) 0.3.3 或更高版本 — Neovim 客户端必须依赖
+- [vv-utils.nvim](https://github.com/beixiyo/vv-utils.nvim) 0.4.0 或更高版本 — Neovim 客户端必须依赖
 - [curl](https://github.com/curl/curl)、[wget](https://github.com/mirror/wget) 或 [PowerShell](https://github.com/PowerShell/PowerShell) 中任意一个 — 安装或更新托管的预编译 MCP 服务端时需要
 - 当前语言已有运行中的 Neovim LSP 客户端 — 有实例时复用；没有时为目标项目启动受管 headless Neovim
 

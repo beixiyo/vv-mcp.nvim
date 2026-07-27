@@ -3,7 +3,7 @@ dofile(root .. '/tests/minimal_init.lua')
 
 local detected_root = '/tmp/vv-mcp-project-a'
 package.loaded['vv-utils.path'] = {
-  get_root = function() return detected_root end,
+  find_root = function() return detected_root end,
 }
 
 local Instance = require('vv-mcp.instance')
