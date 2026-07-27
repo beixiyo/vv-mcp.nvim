@@ -427,7 +427,13 @@ fn error_code(result: &Value) -> &str {
 fn is_unavailable(result: &Value) -> bool {
     matches!(
         error_code(result),
-        "no_quickfixes" | "no_lsp" | "document_not_found" | "capability_unsupported"
+        "no_quickfixes"
+            | "no_lsp"
+            | "no_lsp_config"
+            | "lsp_executable_missing"
+            | "lsp_start_failed"
+            | "document_not_found"
+            | "capability_unsupported"
     )
 }
 
@@ -584,6 +590,24 @@ mod tests {
             fix_skipped("/code/a.ts", error_code(&result))["changed"],
             false
         );
+    }
+
+    #[test]
+    fn treats_terminal_lsp_unavailability_as_noop() {
+        for code in [
+            "no_lsp",
+            "no_lsp_config",
+            "lsp_executable_missing",
+            "lsp_start_failed",
+        ] {
+            assert!(
+                is_unavailable(&json!({ "error": { "code": code } })),
+                "{code} must be a skipped fix rather than a hook failure"
+            );
+        }
+        assert!(!is_unavailable(&json!({
+            "error": { "code": "lsp_initialization_timeout" }
+        })));
     }
 
     #[test]

@@ -15,6 +15,32 @@ local request_log = {}
 local delay_padding = false
 local delayed_requests = 0
 
+local function fixture_actions(params)
+  request_log[#request_log + 1] = vim.deepcopy(params)
+  if delay_padding then delayed_requests = delayed_requests + 1 end
+  local actions = {
+    {
+      title = 'Fix rounded',
+      kind = 'quickfix',
+      edit = { changes = { [vim.uri_from_fname(path)] = {{
+        range = { start = { line = 0, character = 0 }, ['end'] = { line = 0, character = 13 } },
+        newText = 'rounded-lg',
+      }} } },
+    },
+  }
+  if not delay_padding or delayed_requests >= 2 then
+    actions[#actions + 1] = {
+      title = 'Fix padding',
+      kind = 'quickfix',
+      edit = { changes = { [vim.uri_from_fname(path)] = {{
+        range = { start = { line = 0, character = 14 }, ['end'] = { line = 0, character = 22 } },
+        newText = 'p-4',
+      }} } },
+    }
+  end
+  return actions
+end
+
 local client = {
   id = 901,
   name = 'fixture-lsp',
@@ -28,31 +54,11 @@ local client = {
   stop = function() end,
   supports_method = function() return true end,
   request_sync = function(_, _, params)
-    request_log[#request_log + 1] = vim.deepcopy(params)
-    if delay_padding then delayed_requests = delayed_requests + 1 end
-    local actions = {
-      {
-        title = 'Fix rounded',
-        kind = 'quickfix',
-        edit = { changes = { [vim.uri_from_fname(path)] = {{
-          range = { start = { line = 0, character = 0 }, ['end'] = { line = 0, character = 13 } },
-          newText = 'rounded-lg',
-        }} } },
-      },
-    }
-    if not delay_padding or delayed_requests >= 2 then
-      actions[#actions + 1] = {
-        title = 'Fix padding',
-        kind = 'quickfix',
-        edit = { changes = { [vim.uri_from_fname(path)] = {{
-          range = { start = { line = 0, character = 14 }, ['end'] = { line = 0, character = 22 } },
-          newText = 'p-4',
-        }} } },
-      }
-    end
-    return {
-      result = actions,
-    }
+    return { result = fixture_actions(params) }
+  end,
+  request = function(_, _, params, callback)
+    callback(nil, fixture_actions(params))
+    return true, #request_log
   end,
 }
 

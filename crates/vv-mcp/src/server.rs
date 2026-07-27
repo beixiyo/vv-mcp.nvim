@@ -26,6 +26,7 @@ const WORKSPACE_REQUEST: &str = "return require('vv-mcp.workspace').request(...)
 const DEFAULT_LSP_TIMEOUT_MS: u32 = 3000;
 const RPC_TIMEOUT_MARGIN_MS: u64 = 1000;
 const MANAGED_LSP_RETRY_DELAY: Duration = Duration::from_millis(100);
+const MANAGED_LSP_INITIALIZING: &str = "lsp_initializing";
 
 #[derive(Clone, Debug)]
 /// vv-mcp 服务实例，持有实例注册表与输出压缩配置
@@ -262,8 +263,7 @@ impl VvMcpServer {
             }
             match self.request_lsp(&instance, params).await {
                 Ok(result)
-                    if instance.kind == "managed"
-                        && result["error"]["code"].as_str() == Some("no_lsp") =>
+                    if instance.kind == "managed" && managed_lsp_is_initializing(&result) =>
                 {
                     let Some(deadline) = managed_deadline else {
                         return Ok(result);
@@ -461,6 +461,14 @@ fn rpc_timeout(timeout_ms: Option<u32>) -> Duration {
         u64::from(timeout_ms.unwrap_or(DEFAULT_LSP_TIMEOUT_MS))
             .saturating_add(RPC_TIMEOUT_MARGIN_MS),
     )
+}
+
+/// 只有 Neovim 明确报告“仍在初始化”时才允许受管实例重试
+///
+/// `no_lsp` 以及更精确的配置、可执行文件和启动失败错误都是一次 LSP
+/// 等待结束后的终态；重复请求只会把单次 fix 额外放大到 managed ready timeout
+fn managed_lsp_is_initializing(result: &Value) -> bool {
+    result["error"]["code"].as_str() == Some(MANAGED_LSP_INITIALIZING)
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -923,6 +931,27 @@ mod tests {
     fn rpc_timeout_exceeds_inner_lsp_timeout() {
         assert_eq!(rpc_timeout(None), Duration::from_millis(4000));
         assert_eq!(rpc_timeout(Some(7500)), Duration::from_millis(8500));
+    }
+
+    #[test]
+    fn only_retries_explicit_managed_lsp_initialization() {
+        assert!(managed_lsp_is_initializing(&serde_json::json!({
+            "error": { "code": "lsp_initializing" }
+        })));
+        for code in [
+            "no_lsp",
+            "no_lsp_config",
+            "lsp_executable_missing",
+            "lsp_start_failed",
+            "lsp_initialization_timeout",
+        ] {
+            assert!(
+                !managed_lsp_is_initializing(&serde_json::json!({
+                    "error": { "code": code }
+                })),
+                "{code} must be terminal"
+            );
+        }
     }
 
     #[test]
