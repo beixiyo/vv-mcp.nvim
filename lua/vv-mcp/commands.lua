@@ -7,8 +7,12 @@ local M = {}
 ---@param config VVMcpConfig
 function M.setup(config)
   vim.api.nvim_create_user_command('VVMcpRefresh', function()
-    Registry.write(config, Instance.current())
-  end, { desc = 'vv-mcp: refresh current instance registry' })
+    if config.enabled then
+      Registry.write(config, Instance.current())
+    else
+      Registry.remove(config)
+    end
+  end, { force = true, desc = 'vv-mcp: refresh current instance registry' })
 
   vim.api.nvim_create_user_command('VVMcpInfo', function()
     local instance = Instance.current()
@@ -17,7 +21,7 @@ function M.setup(config)
       registry = Registry.path(config, instance.pid),
       server = Binary.status(config.server),
     }), vim.log.levels.INFO)
-  end, { desc = 'vv-mcp: show current instance information' })
+  end, { force = true, desc = 'vv-mcp: show current instance information' })
 
   local function install(force)
     Binary.install(config.server, { force = force }, function(result)
@@ -29,10 +33,13 @@ function M.setup(config)
       )
     end)
   end
+
   vim.api.nvim_create_user_command('VVMcpInstall', function() install(false) end, {
+    force = true,
     desc = 'vv-mcp: install the matching prebuilt server',
   })
   vim.api.nvim_create_user_command('VVMcpUpdate', function() install(true) end, {
+    force = true,
     desc = 'vv-mcp: reinstall the matching prebuilt server',
   })
   vim.api.nvim_create_user_command('VVMcpUninstall', function()
@@ -41,7 +48,7 @@ function M.setup(config)
       removed and 'vv-mcp: removed managed server' or 'vv-mcp: no managed server to remove',
       vim.log.levels.INFO
     )
-  end, { desc = 'vv-mcp: remove the managed server' })
+  end, { force = true, desc = 'vv-mcp: remove the managed server' })
 end
 
 return M

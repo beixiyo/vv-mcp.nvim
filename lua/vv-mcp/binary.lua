@@ -4,6 +4,16 @@ local Download = require('vv-utils.download')
 local Version = require('vv-mcp.version')
 
 local M = {}
+local install_sequence = 0
+
+local function next_install_token()
+  install_sequence = install_sequence + 1
+  return table.concat({
+    tostring(vim.fn.getpid()),
+    tostring(vim.uv.hrtime()),
+    tostring(install_sequence),
+  }, '-')
+end
 
 local function result_error(message)
   return { ok = false, message = message }
@@ -64,7 +74,11 @@ local function install_error(error)
 end
 
 local function download(url, destination, callback)
-  Download.file({ url = url, destination = destination, retries = 3 }, function(result)
+  return Download.file({
+    url = url,
+    destination = destination,
+    retries = 3,
+  }, function(result)
     callback(result.ok, result.message, result)
   end)
 end
@@ -116,23 +130,29 @@ end
 ---@param config VVMcpServerConfig
 ---@param opts? { force?: boolean }
 ---@param callback? fun(result: table)
+---@return fun() cancel 停止当前下载并清理本次安装的临时文件，幂等
 function M.install(config, opts, callback)
   opts = opts or {}
   callback = callback or function() end
+  local function noop() end
+
   if config.path then
     callback(result_error('server.path is user-managed; remove it before automatic installation'))
-    return
+    return noop
   end
+
   local status = M.status(config)
   if status.ready and not opts.force then
     callback({ ok = true, changed = false, path = status.path, version = Version.version })
-    return
+    return noop
   end
+
   local target = M.target()
   if not target then
     callback(result_error('Unsupported platform: ' .. vim.inspect(vim.uv.os_uname())))
-    return
+    return noop
   end
+
   local install_dir = config.install_dir or default_install_dir()
   Fs.mkdir_p(install_dir)
   local suffix = target:find('windows', 1, true) and '.exe' or ''
@@ -141,50 +161,82 @@ function M.install(config, opts, callback)
     Version.repository,
     Version.version
   )
-  local temporary = vim.fs.joinpath(install_dir, asset .. '.download')
-  local checksum_file = vim.fs.joinpath(install_dir, 'checksums.sha256.download')
-  if Fs.exists(temporary) then Fs.delete(temporary) end
-  if Fs.exists(checksum_file) then Fs.delete(checksum_file) end
 
-  download(base_url .. '/checksums.sha256', checksum_file, function(checksum_ok, checksum_error)
+  local token = next_install_token()
+  local temporary = vim.fs.joinpath(install_dir, '.' .. asset .. '.' .. token .. '.download')
+  local checksum_file = vim.fs.joinpath(
+    install_dir,
+    '.checksums.sha256.' .. token .. '.download'
+  )
+
+  local cancelled = false
+  local cancel_download = noop
+
+  local function cleanup()
+    pcall(Fs.delete, checksum_file)
+    pcall(Fs.delete, temporary)
+  end
+
+  local function finish(result)
+    if not cancelled then callback(result) end
+  end
+
+  local function cancel()
+    if cancelled then return end
+    cancelled = true
+    cancel_download()
+    cleanup()
+  end
+
+  cancel_download = download(base_url .. '/checksums.sha256', checksum_file, function(checksum_ok, checksum_error)
+    if cancelled then return end
     if not checksum_ok then
-      callback(result_error('Failed to download checksums: ' .. tostring(checksum_error)))
+      cleanup()
+      finish(result_error('Failed to download checksums: ' .. tostring(checksum_error)))
       return
     end
-    download(base_url .. '/' .. asset, temporary, function(binary_ok, binary_error)
+
+    cancel_download = download(base_url .. '/' .. asset, temporary, function(binary_ok, binary_error)
+
+      if cancelled then return end
       if not binary_ok then
-        Fs.delete(checksum_file)
-        callback(result_error('Failed to download ' .. asset .. ': ' .. tostring(binary_error)))
+        cleanup()
+        finish(result_error('Failed to download ' .. asset .. ': ' .. tostring(binary_error)))
         return
       end
+
       local checksum_content = Fs.read_all(checksum_file) or ''
       local expected = expected_checksum(checksum_content, asset)
       local binary, read_error = read_binary(temporary)
       local actual = binary and vim.fn.sha256(binary) or nil
+
       Fs.delete(checksum_file)
       if not expected or not actual or actual:lower() ~= expected then
         Fs.delete(temporary)
-        callback(result_error(read_error or ('Checksum verification failed for ' .. asset)))
+        finish(result_error(read_error or ('Checksum verification failed for ' .. asset)))
         return
       end
+
       if not suffix:find('exe', 1, true) then vim.uv.fs_chmod(temporary, 493) end
       local replaced, replace_error = replace_binary(temporary, status.path)
       if not replaced then
         Fs.delete(temporary)
-        callback(result_error(install_error(replace_error)))
+        finish(result_error(install_error(replace_error)))
         return
       end
       Fs.write_all(version_path(config), Version.version .. '\n')
-      callback({ ok = true, changed = true, path = status.path, version = Version.version })
+      finish({ ok = true, changed = true, path = status.path, version = Version.version })
     end)
   end)
+  return cancel
 end
 
 ---缺失或版本不匹配时安装二进制
 ---@param config VVMcpServerConfig
 ---@param callback? fun(result: table)
+---@return fun() cancel
 function M.ensure(config, callback)
-  M.install(config, { force = false }, callback)
+  return M.install(config, { force = false }, callback)
 end
 
 ---@param config VVMcpServerConfig
