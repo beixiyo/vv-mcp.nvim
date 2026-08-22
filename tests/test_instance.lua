@@ -12,10 +12,10 @@ detected_root = '/tmp/vv-mcp-project-b'
 local second = Instance.current()
 
 assert(first.instanceId == second.instanceId,
-  'instanceId must remain stable when the detected project root changes')
+  '当检测到项目根变化时 instanceId 应保持稳定')
 assert(first.projectId == second.projectId,
-  'projectId must remain aligned with the stable instanceId')
+  'projectId 应与稳定的 instanceId 保持一致')
 assert(first.roots[1] ~= second.roots[1],
-  'routing roots should still refresh independently from instance identity')
+  '路由 roots 应独立于实例身份进行刷新')
 
-print('vv-mcp stable instance identity test: ok')
+print('vv-mcp 稳定实例身份测试通过')

@@ -8,7 +8,7 @@ local _, error = Context.create({ query = '' }, {
   requires_query = true,
 })
 
-assert(error.code == 'invalid_query', 'workspace_symbols must reject an empty query')
+assert(error.code == 'invalid_query', 'workspace_symbols 应拒绝空查询')
 
 local missing = vim.fs.joinpath(vim.fn.tempname(), 'missing.ts')
 local buffer_count = #vim.api.nvim_list_bufs()
@@ -18,8 +18,8 @@ local _, missing_error = Context.create({ uri = missing }, {
   scope = 'document',
 })
 
-assert(missing_error.code == 'document_not_found', 'missing documents must be rejected')
-assert(#vim.api.nvim_list_bufs() == buffer_count, 'missing documents must not create ghost buffers')
+assert(missing_error.code == 'document_not_found', '缺失文档应被拒绝')
+assert(#vim.api.nvim_list_bufs() == buffer_count, '缺失文档不应创建 ghost buffer')
 
 local unsupported_path = vim.fs.joinpath(vim.fn.tempname(), 'unsupported.bin')
 Fs.mkdir_p(vim.fs.dirname(unsupported_path))
@@ -39,9 +39,9 @@ local _, unsupported_error = Context.create({
 })
 assert(unsupported_error.code == 'no_lsp')
 assert(vim.uv.hrtime() - unsupported_started_at < 200 * 1000000,
-  'files without an enabled LSP must skip before the request timeout')
+  '无可用 LSP 的文件应在请求超时前跳过')
 assert(#vim.api.nvim_list_bufs() == before_temporary,
-  'unsupported batch files must not leave temporary buffers')
+  '未支持的批处理不应留下临时 buffers')
 Fs.delete(vim.fs.dirname(unsupported_path))
 
 local tmp = vim.fn.tempname()
@@ -62,7 +62,7 @@ local _, no_lsp_error = Context.create({ uri = path }, {
 })
 assert(no_lsp_error.code == 'no_lsp')
 assert(vim.api.nvim_buf_get_lines(bufnr, 0, 1, false)[1] == 'after external write',
-  'automatic fixes must observe the latest disk content')
+  '自动修复应读取到最新的磁盘内容')
 
 vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, { 'unsaved' })
 local _, modified_error = Context.create({ uri = path }, {
@@ -72,7 +72,7 @@ local _, modified_error = Context.create({ uri = path }, {
   handler = 'code_actions',
   sync_from_disk = true,
 })
-assert(modified_error.code == 'buffer_modified', 'automatic fixes must preserve unsaved changes')
+assert(modified_error.code == 'buffer_modified', '自动修复应保留未保存改动')
 Fs.delete(tmp)
 
 local cleanup_root = vim.fn.tempname()
@@ -101,11 +101,11 @@ assert(cleanup_context and not cleanup_error)
 assert(cleanup_context.temporary == true)
 Context.cleanup(cleanup_context)
 assert(#vim.api.nvim_list_bufs() == before_cleanup,
-  'successful batch requests must clean their temporary buffer')
+  '批量请求成功后应清理临时 buffer')
 vim.lsp.get_clients = original_get_clients
 Fs.delete(cleanup_root)
 
---- 冷启动竞态：多个 LSP 同时 attach，但初始化有先后
+--- 冷启动竞态：多个 LSP 同时连接，但初始化有先后
 --- 先完成握手的客户端不得让等待提前结束，否则晚初始化客户端的修复项会被整批漏掉
 local cold_root = vim.fn.tempname()
 local cold_path = vim.fs.joinpath(cold_root, 'cold.tsx')
@@ -142,10 +142,10 @@ local cold_context = assert(Context.create({ uri = cold_path, timeoutMs = 2000 }
 local cold_names = vim.tbl_map(function(client) return client.name end, cold_context.clients)
 table.sort(cold_names)
 assert(vim.deep_equal(cold_names, { 'tailwindcss', 'tsgo' }),
-  'fixes must wait for every attached client to finish initializing, got: ' .. vim.inspect(cold_names))
-assert(#cold_context.pending_clients == 0, 'converged clients must not be reported as pending')
+  '修复需等待全部已连接的客户端完成初始化，当前：' .. vim.inspect(cold_names))
+assert(#cold_context.pending_clients == 0, '已收敛客户端不应被报告为待处理')
 
----bufload 触发的 autocmd 可能在首次查询之后才创建客户端，临时 buffer 必须允许晚 attach
+--- bufload 触发的 autocmd 可能在首次查询之后才创建客户端，临时 buffer 必须允许延迟连接
 local late_path = vim.fs.joinpath(cold_root, 'late.tsx')
 Fs.write_all(late_path, 'export const late = 1\n')
 local late_polls = 0
@@ -161,13 +161,13 @@ vim.lsp.get_clients = function(filter)
 end
 local late_context = assert(Context.create({ uri = late_path, timeoutMs = 500 }, fix_operation))
 assert(late_context.clients[1] == late_client,
-  'temporary buffers must wait for clients created after bufload')
+  '临时 buffers 应等待 bufload 后创建的客户端')
 
 --- 超时仍未收敛时，不能静默当作「已修完」，必须报告缺失的客户端
 stub_cold_start(nil)
 local stalled_context = assert(Context.create({ uri = cold_path, timeoutMs = 60 }, fix_operation))
 assert(vim.deep_equal(stalled_context.pending_clients, { 'tailwindcss' }),
-  'clients that never converged must be reported, got: ' .. vim.inspect(stalled_context.pending_clients))
+  '未收敛客户端应被报告，当前: ' .. vim.inspect(stalled_context.pending_clients))
 
 --- 非修复类操作不承诺穷尽，仍按「任一客户端可用即可」返回，避免拖慢交互请求
 stub_cold_start(nil)
@@ -178,9 +178,9 @@ local hover_context = assert(Context.create({ uri = cold_path, timeoutMs = 2000 
   handler = 'intelligence',
 }))
 assert(#hover_context.clients == 1 and hover_context.clients[1].name == 'tsgo',
-  'interactive operations must not block on still-initializing clients')
+  '交互操作不应在仍在初始化的客户端上阻塞')
 
 vim.lsp.get_clients = original_get_clients
 Fs.delete(cold_root)
 
-print('vv-mcp LSP context test: ok')
+print('vv-mcp LSP 上下文测试通过')

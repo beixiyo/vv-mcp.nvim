@@ -12,17 +12,17 @@ local Instance = require('vv-mcp.instance')
 local instance = Instance.current()
 local path = Registry.path({ registry_dir = tmp }, instance.pid)
 
-assert(vim.uv.fs_stat(path), 'registry file should exist')
+assert(vim.uv.fs_stat(path), '注册表文件应存在')
 
 local data = vim.json.decode(require('vv-utils.fs').read_all(path))
-assert(data.pid == vim.fn.getpid(), 'registry pid should match Neovim')
-assert(data.instanceId:match(':' .. data.pid .. '$'), 'instance id should include pid')
-assert(data.socket ~= '', 'Neovim RPC socket should be published')
-assert(data.cwd == vim.fs.normalize(vim.fn.getcwd()), 'cwd should use normalized wire path')
+assert(data.pid == vim.fn.getpid(), '注册表 pid 应与 Neovim 一致')
+assert(data.instanceId:match(':' .. data.pid .. '$'), 'instance id 应包含 pid')
+assert(data.socket ~= '', '应发布 Neovim RPC socket')
+assert(data.cwd == vim.fs.normalize(vim.fn.getcwd()), 'cwd 应使用标准化 wire path')
 local root_is_absolute = data.roots[1]:sub(1, 1) == '/'
   or data.roots[1]:match('^%a:[/\\]') ~= nil
-assert(root_is_absolute, 'registry roots should use absolute paths')
-assert(not data.projectId:match('^%.%-'), 'project id should use the absolute root basename')
+assert(root_is_absolute, '注册表 roots 应使用绝对路径')
+assert(not data.projectId:match('^%.%-'), '项目 id 应使用根目录绝对 basename')
 
 local second_tmp = vim.fn.tempname()
 vim.api.nvim_exec_autocmds('FocusGained', {})
@@ -31,14 +31,14 @@ require('vv-mcp').setup({
   server = { auto_install = false },
 })
 vim.wait(20)
-assert(not vim.uv.fs_stat(path), 'reconfiguring registry_dir should remove the old registry')
+assert(not vim.uv.fs_stat(path), '重配置 registry_dir 时应移除旧注册表')
 
 local second_path = Registry.path({ registry_dir = second_tmp }, instance.pid)
-assert(vim.uv.fs_stat(second_path), 'reconfiguring registry_dir should register in the new directory')
+assert(vim.uv.fs_stat(second_path), '重配置 registry_dir 时应在新目录写入注册')
 Registry.remove({ registry_dir = second_tmp }, instance.pid)
 vim.cmd('VVMcpRefresh')
-assert(vim.uv.fs_stat(second_path), 'reconfigured refresh command should use the new registry directory')
-assert(not vim.uv.fs_stat(path), 'reconfigured refresh command should not recreate the old registry')
+assert(vim.uv.fs_stat(second_path), '重刷注册表应使用新的注册目录')
+assert(not vim.uv.fs_stat(path), '重刷注册表不应重建旧注册表')
 
 require('vv-mcp').setup({
   enabled = false,
@@ -47,7 +47,7 @@ require('vv-mcp').setup({
 })
 vim.cmd('VVMcpRefresh')
 vim.wait(20)
-assert(not vim.uv.fs_stat(second_path), 'disabled setup and refresh should keep the registry absent')
+assert(not vim.uv.fs_stat(second_path), '禁用 setup 与 refresh 时应保持注册表不存在')
 
 local Binary = require('vv-mcp.binary')
 local original_ensure = Binary.ensure
@@ -70,7 +70,7 @@ require('vv-mcp').setup({
 vim.cmd('VVMcpInstall')
 Binary.install = original_install
 assert(command_install_dir == '/tmp/vv-mcp-new-install',
-  'reconfigured install command should use the new server config')
+  '重配后安装命令应使用新的 server 配置')
 
 local ensure_calls = 0
 Binary.ensure = function(_, callback)
@@ -88,7 +88,7 @@ require('vv-mcp').setup({
 })
 vim.wait(20)
 Binary.ensure = original_ensure
-assert(ensure_calls == 0, 'a stale scheduled auto-install should not use the old config')
+assert(ensure_calls == 0, '过期的定时自动安装不应使用旧配置')
 
 local original_get_clients = vim.lsp.get_clients
 vim.lsp.get_clients = function()
@@ -102,7 +102,7 @@ end
 local isolated = Instance.current()
 local expected_root = require('vv-utils.path').find_root(isolated.cwd) or isolated.cwd
 assert(vim.deep_equal(isolated.roots, { expected_root }),
-  'LSP workspace folders must not expand the instance project scope')
+  'LSP workspace folders 不应扩展实例项目范围')
 vim.lsp.get_clients = original_get_clients
 
 local invalid = require('vv-mcp.lsp').request({
@@ -111,16 +111,16 @@ local invalid = require('vv-mcp.lsp').request({
   line = 0,
   character = 1,
 })
-assert(invalid.error.code == 'invalid_position', 'LSP positions should be 1-based')
+assert(invalid.error.code == 'invalid_position', 'LSP 位置应为 1-based')
 
 local Operations = require('vv-mcp.lsp.operations')
-assert(Operations.get('workspace_symbols').requires_query, 'workspace symbols should require query')
-assert(not Operations.get('document_symbols').requires_position, 'document symbols should not require position')
-assert(Operations.get('type_definition').handler == 'navigation', 'type definition should use navigation')
+assert(Operations.get('workspace_symbols').requires_query, '查询 workspace symbols 时应提供 query')
+assert(not Operations.get('document_symbols').requires_position, '查询 document symbols 时不应要求 position')
+assert(Operations.get('type_definition').handler == 'navigation', '类型定义应走 navigation')
 
 Registry.remove({ registry_dir = tmp }, instance.pid)
 Registry.remove({ registry_dir = second_tmp }, instance.pid)
 require('vv-utils.fs').delete(tmp)
 require('vv-utils.fs').delete(second_tmp)
 
-print('vv-mcp registry test: ok')
+print('vv-mcp 注册表测试通过')

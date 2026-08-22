@@ -49,7 +49,7 @@ local client = {
   initialized = true,
   offset_encoding = 'utf-16',
   server_capabilities = {},
-  -- Neovim 内部的 vim.lsp._capability.is_enabled 会索引该字段；真实 client 一定有，替身也必须有
+  -- Neovim 内部的 vim.lsp._capability.is_enabled 会索引该字段；真实客户端一定有，测试替身也必须有
   _enabled_capabilities = {},
   stop = function() end,
   supports_method = function() return true end,
@@ -83,7 +83,7 @@ local listed = CodeActions.request(context({ line = 1, character = 1 }), {
   name = 'code_actions',
   method = 'textDocument/codeAction',
 })
-assert(#listed.items == 2, 'fixture should expose two editable actions')
+assert(#listed.items == 2, '测试 fixture 应暴露两个可编辑动作')
 
 local first_id = listed.items[1].actionId
 local second_id = listed.items[2].actionId
@@ -95,13 +95,13 @@ local first_apply = CodeActions.request(context({ actionId = first_id }), {
   name = 'code_action_apply',
 })
 assert(first_apply.applied == true, vim.inspect(first_apply))
-assert(Fs.read_all(path) == 'rounded-lg p-[16px]\n', 'first action should save the expected edit')
+assert(Fs.read_all(path) == 'rounded-lg p-[16px]\n', '第一个动作应保存预期编辑')
 
 local stale_preview = CodeActions.request(context({ actionId = second_id }), {
   name = 'code_action_preview',
 })
-assert(stale_preview.error.code == 'workspace_edit_stale', 'old sibling actions must become stale')
-assert(Fs.read_all(path) == 'rounded-lg p-[16px]\n', 'stale action must not corrupt the file')
+assert(stale_preview.error.code == 'workspace_edit_stale', '同层旧动作应变为过期')
+assert(Fs.read_all(path) == 'rounded-lg p-[16px]\n', '过期动作不应破坏文件')
 
 vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, { original })
 vim.api.nvim_buf_call(bufnr, function() vim.cmd('silent write') end)
@@ -112,9 +112,9 @@ local fixed = CodeActions.request(context({}), {
   method = 'textDocument/codeAction',
 })
 assert(fixed.changed == true and fixed.saved == true, vim.inspect(fixed))
-assert(fixed.editsCount == 2, 'direct document fix should apply both non-overlapping edits')
-assert(delayed_requests >= 2, 'document fix must resample delayed code actions')
-assert(Fs.read_all(path) == 'rounded-lg p-4\n', 'direct document fix should save all edits')
+assert(fixed.editsCount == 2, '直接文档修复应应用两个互不重叠的编辑')
+assert(delayed_requests >= 2, '文档修复应重新采样延迟的 code action')
+assert(Fs.read_all(path) == 'rounded-lg p-4\n', '直接文档修复应保存全部编辑')
 
 vim.api.nvim_buf_set_lines(bufnr, 0, -1, false, { original })
 vim.api.nvim_buf_call(bufnr, function() vim.cmd('silent write') end)
@@ -127,7 +127,7 @@ local line_fixed = CodeActions.request(context({ line = 1, character = 1 }), {
 assert(line_fixed.changed == true, vim.inspect(line_fixed))
 assert(vim.iter(request_log):all(function(params)
   return not vim.tbl_contains(params.context.only or {}, 'source.fixAll')
-end), 'line fixes must not request document-wide source.fixAll actions')
+end), '行级修复不应请求 document-wide 的 source.fixAll 动作')
 
 local pending = context({})
 pending.pending_clients = { 'slow-lsp' }
@@ -141,4 +141,4 @@ vim.lsp.get_client_by_id = original_get_client
 vim.lsp.get_clients = original_get_clients
 Fs.delete(tmp)
 
-print('vv-mcp code action stale test: ok')
+print('vv-mcp 代码动作过期测试通过')

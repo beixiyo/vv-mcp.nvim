@@ -162,23 +162,23 @@ local test_ok, test_error = xpcall(function()
     server = { auto_install = true, install_dir = old_dir },
   })
   assert(vim.wait(3000, function() return Fs.exists(old_started) end),
-    'old auto-install did not enter the binary download')
+    '旧配置未进入二进制下载')
 
   mcp.setup({
     registry_dir = vim.fs.joinpath(tmp, 'registry-b'),
     server = { auto_install = true, install_dir = new_dir },
   })
   assert(vim.wait(3000, function() return Binary.status({ install_dir = new_dir }).ready end),
-    'new setup should complete its own auto-install')
+    '新 setup 应完成各自的自动安装')
   assert(not Fs.exists(Binary.path({ install_dir = old_dir })),
-    'reconfiguring must not install the old binary')
+    '重配不应安装旧二进制')
   assert(not Fs.exists(Binary.path({ install_dir = old_dir }) .. '.version'),
-    'reconfiguring must not write the old version file')
+    '重配不应写入旧版本文件')
   assert(#download_artifacts(old_dir) == 0,
-    'reconfiguring must clean the old install temporary files')
+    '重配应清理旧安装临时文件')
   assert(#notifications == 1
       and notifications[1] == 'vv-mcp: installed server ' .. Version.version,
-    'only the current different-directory setup may publish a notification')
+    '仅当前不同目录的 setup 可发布通知')
   notifications = {}
 
   mcp.setup({
@@ -186,11 +186,11 @@ local test_ok, test_error = xpcall(function()
     server = { auto_install = true, install_dir = shared_dir },
   })
   assert(vim.wait(3000, function() return Fs.exists(shared_a_started) end),
-    'shared install A did not enter its delayed binary download')
+    '共享安装 A 未进入其延迟二进制下载')
   local a_pid = tonumber(vim.trim(Fs.read_all(shared_a_started) or ''))
-  assert(a_pid, 'shared install A did not publish its shell pid')
+  assert(a_pid, '共享安装 A 未发布其 shell 进程 PID')
   if vim.env.VV_MCP_TEST_FORCE_CLEANUP == '1' then
-    error('forced cleanup verification')
+    error('强制清理校验')
   end
 
   mcp.setup({
@@ -198,27 +198,27 @@ local test_ok, test_error = xpcall(function()
     server = { auto_install = true, install_dir = shared_dir },
   })
   assert(vim.wait(3000, function() return Fs.exists(shared_b_started) end),
-    'shared install B did not start before A exited')
+    '共享安装 B 未在 A 退出前启动')
   assert(vim.uv.kill(a_pid, 0) ~= nil,
-    'shared install A exited before B entered its binary download')
+    '共享安装 A 在 B 进入下载前已退出')
   assert(vim.wait(3000, function() return Binary.status({ install_dir = shared_dir }).ready end),
-    'shared install B must remain ready after cancelled A exits')
+    '共享安装 B 在 A 被取消后应保持就绪')
   assert(vim.wait(3000, function() return vim.uv.kill(a_pid, 0) == nil end),
-    'cancelled shared install A did not terminate its real shell process')
+    '已取消的共享安装 A 未终止其真实 shell 进程')
   assert(#notifications == 1
       and notifications[1] == 'vv-mcp: installed server ' .. Version.version,
-    'cancelled shared setup A must stay silent and only setup B may notify')
+    '已取消的共享 setup A 应保持静默，仅 setup B 可通知')
   assert(#shared_checksums == 2 and shared_checksums[1] ~= shared_checksums[2],
-    'concurrent installs must use unique checksum paths')
+    '并发安装应使用不同校验和路径')
   assert(#shared_binaries == 2 and shared_binaries[1] ~= shared_binaries[2],
-    'concurrent installs must use unique binary temporary paths')
+    '并发安装应使用不同二进制临时路径')
   assert(Fs.read_all(Binary.path({ install_dir = shared_dir })) == binary_content,
-    'cancelled A cleanup corrupted B final binary')
+    '已取消的 A 清理污染了 B 的最终二进制')
   assert(Fs.read_all(Binary.path({ install_dir = shared_dir }) .. '.version')
       == Version.version .. '\n',
-    'shared installs must keep the final version path fixed')
+    '并发安装应保持最终版本路径固定')
   assert(#download_artifacts(shared_dir) == 0,
-    'shared installs left owned download artifacts behind')
+    '并发安装应清理所有归属下载产物')
   notifications = {}
 
   mcp.setup({
@@ -226,7 +226,7 @@ local test_ok, test_error = xpcall(function()
     server = { auto_install = true, install_dir = disabled_dir },
   })
   assert(vim.wait(3000, function() return Fs.exists(disabled_started) end),
-    'disabled fixture did not enter the binary download')
+    '禁用 fixture 未进入二进制下载')
   mcp.setup({
     enabled = false,
     registry_dir = vim.fs.joinpath(tmp, 'registry-c'),
@@ -234,12 +234,12 @@ local test_ok, test_error = xpcall(function()
   })
   vim.wait(100)
   assert(not Fs.exists(Binary.path({ install_dir = disabled_dir })),
-    'disabled setup must not install the in-flight binary')
+    '禁用 setup 不应安装进行中的二进制')
   assert(not Fs.exists(Binary.path({ install_dir = disabled_dir }) .. '.version'),
-    'disabled setup must not write an in-flight version file')
+    '禁用 setup 不应写入进行中的版本文件')
   assert(#download_artifacts(disabled_dir) == 0,
-    'disabled setup must clean in-flight temporary files')
-  assert(#notifications == 0, 'disabled setup must not publish an auto-install notification')
+    '禁用 setup 应清理进行中的临时文件')
+  assert(#notifications == 0, '禁用 setup 不应发布自动安装通知')
 end, debug.traceback)
 
 pcall(mcp.setup, {
@@ -253,19 +253,19 @@ Download.resolve = original_resolve
 pcall(Fs.delete, tmp)
 
 if vim.env.VV_MCP_TEST_FORCE_CLEANUP == '1' then
-  assert(not test_ok and tostring(test_error):find('forced cleanup verification', 1, true),
-    'cleanup verification did not fail at the intended boundary')
+  assert(not test_ok and tostring(test_error):find('强制清理校验', 1, true),
+    '清理校验未在预期边界失败')
   assert(Download.resolve == original_resolve and vim.notify == original_notify,
-    'cleanup verification did not restore mocks')
-  assert(processes_stopped, 'cleanup verification left a fixture process')
-  assert(not Fs.exists(tmp), 'cleanup verification left its fixture directory')
-  print('vv-mcp auto-install failure cleanup test: ok')
+    '清理校验未恢复测试替身')
+  assert(processes_stopped, '清理校验保留了测试进程')
+  assert(not Fs.exists(tmp), '清理校验保留了测试目录')
+  print('vv-mcp 自动安装 失败清理测试通过')
   return
 end
 
 if not processes_stopped and test_ok then
   test_ok = false
-  test_error = 'fixture cleanup left a process'
+  test_error = 'fixture 清理保留了进程'
 end
 if not test_ok then error(test_error, 0) end
-print('vv-mcp auto-install cancellation test: ok')
+print('vv-mcp 自动安装 取消测试通过')

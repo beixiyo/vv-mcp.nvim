@@ -25,24 +25,24 @@ local preview = Workspace.request({
   newUri = target,
 })
 assert(not preview.error, vim.inspect(preview.error))
-assert(preview.resourceRenameId, 'preview should return resourceRenameId')
-assert(Fs.exists(source), 'preview must not move the source')
-assert(not Fs.exists(target), 'preview must not create the target')
+assert(preview.resourceRenameId, 'preview 应返回 resourceRenameId')
+assert(Fs.exists(source), 'preview 不应移动 source 文件')
+assert(not Fs.exists(target), 'preview 不应创建目标文件')
 
 local applied = Workspace.request({
   operation = 'rename_resource_apply',
   resourceRenameId = preview.resourceRenameId,
 })
 assert(applied.applied == true, vim.inspect(applied))
-assert(not Fs.exists(source), 'apply should remove the old path')
-assert(Fs.exists(target), 'apply should create the target path')
-assert(Fs.read_all(target) == 'export const value = 1\n', 'apply should preserve file contents')
+assert(not Fs.exists(source), '应用应删除旧路径')
+assert(Fs.exists(target), '应用应创建目标路径')
+assert(Fs.read_all(target) == 'export const value = 1\n', '应用应保留文件内容')
 
 local replay = Workspace.request({
   operation = 'rename_resource_apply',
   resourceRenameId = preview.resourceRenameId,
 })
-assert(replay.error.code == 'resource_rename_not_found', 'applied transaction must be single-use')
+assert(replay.error.code == 'resource_rename_not_found', '已应用事务应为一次性')
 
 local modified_source = vim.fs.joinpath(tmp, 'modified.ts')
 local modified_target = vim.fs.joinpath(tmp, 'modified-renamed.ts')
@@ -55,7 +55,7 @@ local modified_preview = Workspace.request({
   oldUri = modified_source,
   newUri = modified_target,
 })
-assert(modified_preview.error.code == 'resource_buffer_modified', 'modified source buffers must block preview')
+assert(modified_preview.error.code == 'resource_buffer_modified', '已修改的源码缓冲应阻止 preview')
 vim.api.nvim_buf_delete(modified_buf, { force = true })
 
 local stale_source = vim.fs.joinpath(tmp, 'stale.ts')
@@ -71,8 +71,8 @@ local stale_apply = Workspace.request({
   operation = 'rename_resource_apply',
   resourceRenameId = stale_preview.resourceRenameId,
 })
-assert(stale_apply.error.code == 'resource_rename_stale', 'target conflicts must invalidate preview')
-assert(Fs.exists(stale_source), 'stale apply must not move the source')
+assert(stale_apply.error.code == 'resource_rename_stale', '目标冲突应使 preview 失效')
+assert(Fs.exists(stale_source), '过期应用不应移动 source 文件')
 
 local lsp_source = vim.fs.joinpath(tmp, 'module.ts')
 local lsp_target = vim.fs.joinpath(tmp, 'module-renamed.ts')
@@ -85,7 +85,7 @@ local source_buf = vim.fn.bufadd(lsp_source)
 vim.fn.bufload(source_buf)
 local target_ghost = vim.fn.bufadd(lsp_target)
 vim.fn.bufload(target_ghost)
-assert(vim.api.nvim_buf_line_count(target_ghost) == 1, 'fixture target should be an empty ghost buffer')
+assert(vim.api.nvim_buf_line_count(target_ghost) == 1, 'fixture 目标应是空 ghost buffer')
 
 local notified = false
 local original_get_clients = vim.lsp.get_clients
@@ -125,26 +125,26 @@ local lsp_preview = Workspace.request({
   oldUri = lsp_source,
   newUri = lsp_target,
 })
-assert(lsp_preview.editsCount == 1, 'preview should include LSP import edit')
-assert(Fs.read_all(consumer) == before_import .. '\n', 'preview must not apply import edits')
+assert(lsp_preview.editsCount == 1, 'preview 应包含 LSP 的 import 编辑')
+assert(Fs.read_all(consumer) == before_import .. '\n', 'preview 不应直接应用 import 编辑')
 
 local lsp_applied = Workspace.request({
   operation = 'rename_resource_apply',
   resourceRenameId = lsp_preview.resourceRenameId,
 })
 assert(lsp_applied.applied == true, vim.inspect(lsp_applied))
-assert(Fs.exists(lsp_target), 'LSP-aware apply should rename the source file')
-assert(Fs.read_all(consumer) == after_import .. '\n', 'LSP-aware apply should save import edits')
-assert(notified, 'apply should send workspace/didRenameFiles')
-assert(not vim.api.nvim_buf_is_valid(target_ghost), 'apply should remove an empty target ghost buffer')
+assert(Fs.exists(lsp_target), 'LSP 感知的 apply 应重命名源文件')
+assert(Fs.read_all(consumer) == after_import .. '\n', 'LSP 感知的 apply 应保存 import 编辑')
+assert(notified, 'apply 应发送 workspace/didRenameFiles')
+assert(not vim.api.nvim_buf_is_valid(target_ghost), '应用应移除空目标 ghost buffer')
 vim.lsp.get_clients = original_get_clients
 assert(
   vim.fn.resolve(vim.api.nvim_buf_get_name(source_buf)) == vim.fn.resolve(lsp_target),
-  'apply should synchronize the source buffer path'
+  'apply 应同步源 buffer 路径'
 )
 
 vim.fn.chdir(previous_cwd)
 vim.uv.chdir(previous_cwd)
 Fs.delete(tmp)
 
-print('vv-mcp workspace rename test: ok')
+print('vv-mcp 工作区重命名测试通过')

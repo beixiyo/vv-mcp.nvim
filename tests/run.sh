@@ -20,15 +20,15 @@ fi
 
 for test_file in "$tests_dir"/test_*.lua; do
   test_name=$(basename -- "$test_file")
-  printf '%sRUN%s: %s\n' "$cyan" "$reset" "$test_name"
+  printf '%s执行%s: %s\n' "$cyan" "$reset" "$test_name"
   if "$nvim_bin" --headless -u NONE -l "$test_file"; then
     passed=$((passed + 1))
-    printf '%sPASS%s: %s\n' "$green" "$reset" "$test_name"
+    printf '%s通过%s: %s\n' "$green" "$reset" "$test_name"
   else
     status=$?
-    printf '%sFAIL%s: %s\n' "$red" "$reset" "$test_name" >&2
+    printf '%s失败%s: %s\n' "$red" "$reset" "$test_name" >&2
     exit "$status"
   fi
 done
 
-printf '%sPASS%s: %d test files\n' "$green" "$reset" "$passed"
+printf '%s通过%s: %d 个测试文件\n' "$green" "$reset" "$passed"

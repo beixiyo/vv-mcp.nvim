@@ -4,6 +4,7 @@ local M = {}
 ---将路径转换为跨平台传输格式，Windows 反斜杠统一为斜杠
 ---@param path string 本地路径
 ---@return string wire_path
+---@return integer replacement_count
 function M.wire_path(path)
   return path:gsub('\\', '/')
 end

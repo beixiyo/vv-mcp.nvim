@@ -46,7 +46,7 @@ local preview = Rename.request(context({
 })
 assert(not preview.error, vim.inspect(preview.error))
 assert(preview.filesChanged == 1 and preview.editsCount == 1)
-assert(Fs.read_all(path) == 'export const oldName = 1\n', 'preview must not change the file')
+assert(Fs.read_all(path) == 'export const oldName = 1\n', 'preview 不应改动文件')
 
 local applied = Rename.request(context({ renameId = preview.renameId }), {
   name = 'rename_apply',
@@ -60,4 +60,4 @@ local replay = Rename.request(context({ renameId = preview.renameId }), {
 assert(replay.error and replay.error.code == 'rename_not_found')
 
 Fs.delete(tmp)
-print('vv-mcp rename transaction test: ok')
+print('vv-mcp 重命名事务测试通过')

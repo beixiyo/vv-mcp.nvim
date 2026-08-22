@@ -60,17 +60,17 @@ vim.env.VV_MCP_TEST_RELEASE = release_dir
 
 local install_result
 Binary.install(managed, {}, function(result) install_result = result end)
-assert(vim.wait(5000, function() return install_result ~= nil end), 'binary install timed out')
+assert(vim.wait(5000, function() return install_result ~= nil end), '安装二进制超时')
 assert(install_result.ok and install_result.changed, vim.inspect(install_result))
-assert(Fs.read_all(Binary.path(managed)) == binary_content, 'installed binary must match release asset')
-assert(Binary.status(managed).ready == true, 'installed version should be ready')
+assert(Fs.read_all(Binary.path(managed)) == binary_content, '已安装二进制必须与发布资产一致')
+assert(Binary.status(managed).ready == true, '已安装版本应就绪')
 
 local ensure_result
 Binary.ensure(managed, function(result) ensure_result = result end)
-assert(vim.wait(1000, function() return ensure_result ~= nil end), 'binary ensure timed out')
-assert(ensure_result.ok and ensure_result.changed == false, 'matching installation should be reused')
-assert(Binary.uninstall(managed) == true, 'managed installation should be removable')
-assert(Binary.status(managed).ready == false, 'uninstalled binary should not be ready')
+assert(vim.wait(1000, function() return ensure_result ~= nil end), '二进制 ensure 超时')
+assert(ensure_result.ok and ensure_result.changed == false, '匹配的安装应被复用')
+assert(Binary.uninstall(managed) == true, '托管安装应可卸载')
+assert(Binary.status(managed).ready == false, '卸载后二进制不应处于可用状态')
 
 Download.resolve = function() return nil end
 local missing_downloader_result
@@ -83,4 +83,4 @@ vim.env.PATH = original_path
 vim.env.VV_MCP_TEST_RELEASE = nil
 Fs.delete(tmp)
 
-print('vv-mcp binary test: ok')
+print('vv-mcp 二进制测试通过')
