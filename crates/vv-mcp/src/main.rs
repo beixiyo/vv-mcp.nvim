@@ -9,6 +9,7 @@ mod uri;
 
 use std::{
     collections::BTreeSet,
+    future::Future,
     io::IsTerminal,
     path::{Path, PathBuf},
 };
@@ -163,31 +164,31 @@ async fn main() -> anyhow::Result<()> {
         }) => {
             params.set_routing(instance_id, timeout_ms);
             params.set_uri(cli_uri(params.uri())?);
-            let result = run_lsp_command(&server, params, yes, keep_alive_ms).await;
+            let result = until_terminated(run_lsp_command(&server, params, yes, keep_alive_ms)).await;
             server.shutdown().await;
-            return result;
+            return finish(result);
         }
         Some(Command::Editor { mut params }) => {
             params.set_routing(instance_id, timeout_ms);
             if let Some(uri) = params.uri() {
                 params.set_uri(cli_uri(uri)?);
             }
-            let result = run_editor_command(&server, params).await;
+            let result = until_terminated(run_editor_command(&server, params)).await;
             server.shutdown().await;
-            return result;
+            return finish(result);
         }
         Some(Command::Fix { path, line, all }) => {
-            let result = run_fix_command(
+            let result = until_terminated(run_fix_command(
                 &server,
                 path,
                 instance_id,
                 timeout_ms.unwrap_or(DEFAULT_FIX_TIMEOUT_MS),
                 line,
                 all,
-            )
+            ))
             .await;
             server.shutdown().await;
-            return result;
+            return finish(result);
         }
         None => {}
     }
@@ -200,7 +201,7 @@ async fn main() -> anyhow::Result<()> {
         return Ok(());
     }
 
-    // 无参数即 MCP server 模式（客户端就是这么启动它的），会一直在 stdin 上等 JSON-RPC。
+    // 无参数即 MCP server 模式（客户端就是这么启动它的），会一直在 stdin 上等 JSON-RPC
     // 但人在终端里直接敲 `vv-mcp` 时 stdin 是 TTY，那种「静默卡住」毫无意义，给出帮助更有用
     if std::io::stdin().is_terminal() {
         Args::command().print_help()?;
@@ -210,10 +211,62 @@ async fn main() -> anyhow::Result<()> {
         return Ok(());
     }
 
-    let service = server.serve(stdio()).await?;
-    service.waiting().await?;
+    let service = server.clone().serve(stdio()).await?;
+    let result = until_terminated(async {
+        service.waiting().await?;
+        Ok(())
+    })
+    .await;
+    server.shutdown().await;
+    finish(result)
+}
 
-    Ok(())
+/// 进程收到终止信号；用 Error 携带，让调用方统一走「先回收托管 Neovim 再退出」
+#[derive(Debug, thiserror::Error)]
+#[error("terminated by signal")]
+struct Terminated;
+
+/// 等待 SIGTERM / SIGINT。MCP 客户端关闭和 hook 超时都可能直接发信号，
+/// 不接住的话进程立刻退出，托管 Neovim 及其 LSP 子进程全部成为孤儿
+async fn termination_signal() {
+    #[cfg(unix)]
+    {
+        use tokio::signal::unix::{SignalKind, signal};
+        match (
+            signal(SignalKind::terminate()),
+            signal(SignalKind::interrupt()),
+        ) {
+            (Ok(mut terminate), Ok(mut interrupt)) => {
+                tokio::select! {
+                    _ = terminate.recv() => {}
+                    _ = interrupt.recv() => {}
+                }
+            }
+            _ => std::future::pending().await,
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        if tokio::signal::ctrl_c().await.is_err() {
+            std::future::pending::<()>().await;
+        }
+    }
+}
+
+/// 运行任务直到完成或收到终止信号，两种情况都回到调用方执行 shutdown
+async fn until_terminated<T>(task: impl Future<Output = anyhow::Result<T>>) -> anyhow::Result<T> {
+    tokio::select! {
+        result = task => result,
+        _ = termination_signal() => Err(Terminated.into()),
+    }
+}
+
+/// 信号终止属于预期退出：托管资源已回收，按惯例以 128+SIGTERM 静默退出，不打印错误
+fn finish(result: anyhow::Result<()>) -> anyhow::Result<()> {
+    match result {
+        Err(error) if error.is::<Terminated>() => std::process::exit(143),
+        other => other,
+    }
 }
 
 /// 直接执行一次 LSP 操作：写盘操作要求显式 --yes，结果按统一输出格式渲染

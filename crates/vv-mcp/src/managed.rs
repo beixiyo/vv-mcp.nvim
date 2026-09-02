@@ -23,7 +23,7 @@ use crate::{
     uri,
 };
 
-const DEFAULT_IDLE_TIMEOUT: Duration = Duration::from_secs(15 * 60);
+const DEFAULT_IDLE_TIMEOUT: Duration = Duration::from_secs(5 * 60);
 const DEFAULT_HANDOFF_DELAY: Duration = Duration::from_secs(15);
 const DEFAULT_WATCH_INTERVAL: Duration = Duration::from_secs(1);
 const DEFAULT_READY_TIMEOUT: Duration = Duration::from_secs(15);

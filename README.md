@@ -108,7 +108,7 @@ VV_MCP_OUTPUT_FORMAT=markdown
 VV_MCP_MAX_RESULTS=100
 ```
 
-Managed headless instances stop after 15 idle minutes. When an interactive Neovim registers for the same project, the managed instance gracefully exits after a 15-second handoff. These positive-millisecond environment variables override the defaults: `VV_MCP_MANAGED_IDLE_TIMEOUT_MS`, `VV_MCP_MANAGED_HANDOFF_DELAY_MS`, `VV_MCP_MANAGED_WATCH_INTERVAL_MS`, and `VV_MCP_MANAGED_READY_TIMEOUT_MS`.
+Managed headless instances stop after 5 idle minutes. When an interactive Neovim registers for the same project, the managed instance gracefully exits after a 15-second handoff. These positive-millisecond environment variables override the defaults: `VV_MCP_MANAGED_IDLE_TIMEOUT_MS`, `VV_MCP_MANAGED_HANDOFF_DELAY_MS`, `VV_MCP_MANAGED_WATCH_INTERVAL_MS`, and `VV_MCP_MANAGED_READY_TIMEOUT_MS`.
 
 For a CLI handoff check, add `--keep-alive-ms 30000` to an `lsp` command. It keeps the process manager alive after printing the result, so its managed instance can observe an interactive Neovim registration.
 

@@ -108,7 +108,7 @@ VV_MCP_OUTPUT_FORMAT=markdown
 VV_MCP_MAX_RESULTS=100
 ```
 
-受管 headless 实例默认空闲 15 分钟后退出。同项目的真实 Neovim 注册后，受管实例会在 15 秒交接期后优雅退出。以下正整数毫秒环境变量可覆盖默认值：`VV_MCP_MANAGED_IDLE_TIMEOUT_MS`、`VV_MCP_MANAGED_HANDOFF_DELAY_MS`、`VV_MCP_MANAGED_WATCH_INTERVAL_MS`、`VV_MCP_MANAGED_READY_TIMEOUT_MS`
+受管 headless 实例默认空闲 5 分钟后退出。同项目的真实 Neovim 注册后，受管实例会在 15 秒交接期后优雅退出。以下正整数毫秒环境变量可覆盖默认值：`VV_MCP_MANAGED_IDLE_TIMEOUT_MS`、`VV_MCP_MANAGED_HANDOFF_DELAY_MS`、`VV_MCP_MANAGED_WATCH_INTERVAL_MS`、`VV_MCP_MANAGED_READY_TIMEOUT_MS`
 
 用 CLI 验证交接时，在 `lsp` 命令追加 `--keep-alive-ms 30000`。LSP 结果打印后进程管理器仍会保活，因此受管实例能观察到真实 Neovim 的注册
 

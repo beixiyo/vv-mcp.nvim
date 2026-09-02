@@ -3,11 +3,18 @@ set -euo pipefail
 
 repo_dir=$(cd "$(dirname "$0")/.." && pwd)
 install_dir="$HOME/.local/bin"
+version=$(sed -n "s/^version = '\([^']*\)'$/\1/p" "$repo_dir/crates/vv-mcp/Cargo.toml")
+
+if [[ -z "$version" ]]; then
+  printf 'Failed to read vv-mcp version from Cargo.toml\n' >&2
+  exit 1
+fi
 
 cd "$repo_dir"
 cargo build --locked
 
 mkdir -p "$install_dir"
 install -m 755 target/debug/vv-mcp "$install_dir/vv-mcp"
+printf '%s\n' "$version" > "$install_dir/vv-mcp.version"
 
-printf 'Installed dev vv-mcp at %s\n' "$install_dir/vv-mcp"
+printf 'Installed dev vv-mcp %s at %s\n' "$version" "$install_dir/vv-mcp"

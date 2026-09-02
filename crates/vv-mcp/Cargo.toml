@@ -1,6 +1,6 @@
 [package]
 name = 'vv-mcp'
-version = '0.3.3'
+version = '0.3.4'
 edition = '2024'
 description = 'Expose active Neovim LSP clients through MCP'
 license = 'MIT'
