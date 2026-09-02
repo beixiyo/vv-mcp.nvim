@@ -164,7 +164,8 @@ async fn main() -> anyhow::Result<()> {
         }) => {
             params.set_routing(instance_id, timeout_ms);
             params.set_uri(cli_uri(params.uri())?);
-            let result = until_terminated(run_lsp_command(&server, params, yes, keep_alive_ms)).await;
+            let result =
+                until_terminated(run_lsp_command(&server, params, yes, keep_alive_ms)).await;
             server.shutdown().await;
             return finish(result);
         }
