@@ -31,6 +31,8 @@ jobs:
 
   lua:
     runs-on: ubuntu-24.04
+    # mini.test 内部超时不能中断阻塞 RPC，必须保留 CI 外层截止
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
@@ -45,15 +47,13 @@ jobs:
         with:
           version: v0.12.0
           neovim: true
-      - name: Run Lua tests
+      - name: Run Lua tests with shared mini.test runner
         working-directory: vv-mcp.nvim
-        run: |
-          for test in tests/test_*.lua; do
-            nvim --headless -u NONE -l "$test"
-          done
+        run: sh tests/run.sh
 
   lua-nightly:
     runs-on: ubuntu-24.04
+    timeout-minutes: 10
     continue-on-error: true
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
@@ -71,7 +71,4 @@ jobs:
           neovim: true
       - name: Run Lua tests against Neovim nightly
         working-directory: vv-mcp.nvim
-        run: |
-          for test in tests/test_*.lua; do
-            nvim --headless -u NONE -l "$test"
-          done
+        run: sh tests/run.sh

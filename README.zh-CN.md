@@ -374,3 +374,31 @@ Lua handlers → attached LSP clients / live buffers
 ## 许可证
 
 [MIT](./LICENSE)
+
+## 开发测试
+
+Linux/macOS 准备 Neovim 0.12+、Git 和 POSIX 基础工具后，将本仓与包含 `dev/test/` 的 vv-utils.nvim 检出为兄弟目录，直接运行入口。源码不在兄弟目录时才需设置 `VV_UTILS`；测试不读取个人配置，不依赖 parser、Rust 工具链或真实 MCP 二进制
+
+```sh
+sh tests/run.sh
+# 非默认源码位置或 Neovim 可执行文件可覆盖
+VV_UTILS=/path/to/vv-utils.nvim NVIM_BIN=/path/to/nvim sh tests/run.sh
+sh tests/run.sh '过滤词'
+```
+
+要求 Neovim 0.12+、POSIX shell 和[共享 pinned mini.test 入口](../vv-utils.nvim/dev/test/README.md)
+`VV_UTILS` 默认兄弟仓库 `vv-utils.nvim`，`NVIM_BIN` 默认 `nvim`。可选过滤词按文件路径或中文用例名
+做**字面子串**匹配，不是 pattern；没有匹配视为失败。离线运行须先准备固定版本 mini.test 缓存，
+可用 `VV_TEST_DEPS_CACHE=/path/to/nvim-test-deps` 显式指定；本套件不安装业务依赖
+
+每个具名 case 启动全新子 Neovim，不读取个人配置；cwd、HOME、XDG 与临时文件都位于独立 `/tmp`
+父 hook 在断言失败时仍停止子进程并清理 fixture；scheduled 回调异常单独收集后断言
+headless 状态验证不能替代真实终端的视觉和鼠标验证
+
+CI 的 stable / nightly 与 release 的 Lua 验证均调用 `sh tests/run.sh`，由共享入口递归收集、执行具名集合并传播失败退出码，不再用 `nvim -l tests/test_*.lua` 直接加载集合。Ubuntu 24.04 stable 使用 Neovim v0.12.0 并作为必过门；nightly 保留实验性非阻断策略。Lua CI 设置 10 分钟外层超时，发布 verify（含 Rust）设置 45 分钟超时，避免同步 RPC 卡住任务。Rust 检查和二进制构建仍由原有独立流程执行
+
+共享 mini.test 固定版本由 vv-utils 管理，在线首次运行会下载到测试缓存；离线执行须提前准备该缓存。迁移发布时先提交并发布 vv-utils 的 `dev/test/`，再发布本仓新的测试集合及 helpers；仅修改本仓 workflow、但远端 vv-utils 缺少共享入口时，CI 会明确失败
+
+发布资产、下载器和 LSP 客户端都使用本地替身，不下载真实二进制，不发起远程网络请求
+二进制场景用本地假 `curl` 与模拟发布字节；取消场景使用本地 shell 进程，并保留独立的失败清理用例，
+父 hook 也会终止遗留 fixture PID。需要 Neovim RPC/socket 支持、POSIX shell 及可写、可执行的 `/tmp`；fixture 不触及开发仓库 Git。Docker 的 tmpfs 默认可能带 `noexec`，请显式使用 `--tmpfs /tmp:rw,nosuid,nodev,exec,size=512m`，否则本地假下载器即使有执行位也无法启动

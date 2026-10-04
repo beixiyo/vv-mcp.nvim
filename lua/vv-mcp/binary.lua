@@ -128,7 +128,7 @@ end
 
 ---异步下载并安装当前插件版本对应的预编译二进制
 ---@param config VVMcpServerConfig
----@param opts? { force?: boolean }
+---@param opts? VVMcpInstallOpts
 ---@param callback? fun(result: table)
 ---@return fun() cancel 停止当前下载并清理本次安装的临时文件，幂等
 function M.install(config, opts, callback)
@@ -161,6 +161,8 @@ function M.install(config, opts, callback)
     Version.repository,
     Version.version
   )
+
+  if opts.on_start then opts.on_start({ version = Version.version, target = target }) end
 
   local token = next_install_token()
   local temporary = vim.fs.joinpath(install_dir, '.' .. asset .. '.' .. token .. '.download')
@@ -255,3 +257,7 @@ function M.uninstall(config)
 end
 
 return M
+
+---@class VVMcpInstallOpts
+---@field force? boolean 已安装匹配版本时仍重新下载 @default false
+---@field on_start? fun(info: { version: string, target: string }) 确定需要下载、发起第一个请求前同步调用；已就绪或提前失败时不调用 @default nil

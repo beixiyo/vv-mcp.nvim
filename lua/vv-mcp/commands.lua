@@ -4,6 +4,9 @@ local Binary = require('vv-mcp.binary')
 
 local M = {}
 
+-- 跨 setup 共享：重复 setup 后在途下载仍会拒绝新的安装命令
+local installing = false
+
 ---@param config VVMcpConfig
 function M.setup(config)
   vim.api.nvim_create_user_command('VVMcpRefresh', function()
@@ -24,7 +27,19 @@ function M.setup(config)
   end, { force = true, desc = 'vv-mcp: show current instance information' })
 
   local function install(force)
-    Binary.install(config.server, { force = force }, function(result)
+    if installing then
+      vim.notify('vv-mcp: server installation already in progress', vim.log.levels.WARN)
+      return
+    end
+
+    installing = true
+    local ok, err = pcall(Binary.install, config.server, {
+      force = force,
+      on_start = function(info)
+        vim.notify(('vv-mcp: downloading server v%s…'):format(info.version), vim.log.levels.INFO)
+      end,
+    }, function(result)
+      installing = false
       vim.notify(
         result.ok
             and ('vv-mcp: server %s at %s'):format(result.version, result.path)
@@ -32,6 +47,10 @@ function M.setup(config)
         result.ok and vim.log.levels.INFO or vim.log.levels.ERROR
       )
     end)
+    if not ok then
+      installing = false
+      error(err, 0)
+    end
   end
 
   vim.api.nvim_create_user_command('VVMcpInstall', function() install(false) end, {
