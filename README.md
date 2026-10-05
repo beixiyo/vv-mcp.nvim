@@ -377,31 +377,12 @@ This allows nested workspaces to select the most specific Neovim process while k
 
 ## Development tests
 
-On Linux/macOS, prepare Neovim 0.12+, Git and standard POSIX tools, then check out this repository beside a vv-utils.nvim checkout containing `dev/test/`. Run the entry directly; set `VV_UTILS` only for another source layout. Lua tests do not load personal configuration or require parsers, a Rust toolchain, or a real MCP binary.
-
 ```sh
-sh tests/run.sh
-# Override non-default source or executable locations
-VV_UTILS=/path/to/vv-utils.nvim NVIM_BIN=/path/to/nvim sh tests/run.sh
-sh tests/run.sh 'FILTER'
+./tests/run.sh [literal-filter]
 ```
 
-Requires Neovim 0.12+, POSIX shell and the shared [pinned mini.test runner](../vv-utils.nvim/dev/test/README.md).
-`VV_UTILS` defaults to the sibling `vv-utils.nvim`; `NVIM_BIN` defaults to `nvim`.
-The optional filter is a literal substring of the file path or Chinese case name, not a pattern;
-no matching cases fails. For offline runs, prepare the pinned mini.test cache beforehand and
-set `VV_TEST_DEPS_CACHE=/path/to/nvim-test-deps` if needed. This suite does not install business dependencies.
+Requires Unix-like OS, Neovim 0.12+, Git, POSIX shell and an existing vv-utils.nvim source checkout containing `dev/test/`. The entry discovers development or installed sources; override with `VV_UTILS` or select Neovim with `NVIM_BIN`. It neither loads personal configuration nor downloads vv plugins.
 
-Each named case starts a fresh child Neovim without personal configuration, with cwd, HOME,
-XDG directories and temporary fixtures under an independent `/tmp` directory. Parent hooks stop the
-child and remove fixtures even after assertion failures; scheduled callback errors are asserted separately.
-Headless state checks do not replace visual or mouse validation in a real terminal.
+Lua tests use local download/LSP mocks, not a Rust toolchain, parsers or a real MCP binary. Temporary storage must be writable and executable for fake downloaders and shell processes. CI/release use this entry; publish the shared utils entry first. Set the optional repository variable VV_TEST_UTILS_REV to a published commit/tag for reproducible CI; otherwise the explicit utils checkout tracks main.
 
-Stable/nightly CI and release verification use `sh tests/run.sh`: the shared runner recursively collects and executes named sets and propagates failures, rather than directly loading them with `nvim -l tests/test_*.lua`. Stable Ubuntu 24.04 uses Neovim v0.12.0 as the required gate; nightly keeps its experimental non-blocking policy. Lua CI has a 10-minute outer timeout; release verification, including Rust, has a 45-minute timeout to bound blocked RPC. Existing Rust checks and binary build jobs remain separate.
-
-vv-utils owns the pinned mini.test version and downloads it to the test cache on the first online run; offline execution needs the cache prepared beforehand. Publish the shared `vv-utils/dev/test/` tools before the migrated test sets and helpers in this repository. Updating only this workflow while remote vv-utils lacks the shared entry fails explicitly.
-
-All releases, downloaders and LSP clients are local mocks; no real binary download or remote network occurs.
-The binary scenario uses a local fake `curl` and mock release bytes. Cancellation scenarios use local
-shell processes and include a named failure-cleanup case; parent hooks also terminate leftover fixture PIDs.
-Git fixtures, when needed, never touch the development repository. Neovim RPC/socket support, a POSIX shell, and a writable, executable `/tmp` are required. Docker tmpfs may default to `noexec`; explicitly use `--tmpfs /tmp:rw,nosuid,nodev,exec,size=512m` so local fake downloaders can execute.
+Filtering is literal; no matches exits nonzero. Discovery, mini.test preparation and isolation are documented in the [shared test guide](https://github.com/beixiyo/vv-utils.nvim/blob/main/dev/test/README.md).

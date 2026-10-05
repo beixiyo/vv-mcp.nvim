@@ -41,6 +41,7 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
           repository: beixiyo/vv-utils.nvim
+          ref: ${{ vars.VV_TEST_UTILS_REV || 'main' }}
           persist-credentials: false
           path: vv-utils.nvim
       - uses: rhysd/action-setup-vim@febef33995d6649302e9d88dda81e071b68f16a7
@@ -49,7 +50,9 @@ jobs:
           neovim: true
       - name: Run Lua tests with shared mini.test runner
         working-directory: vv-mcp.nvim
-        run: sh tests/run.sh
+        env:
+          VV_UTILS: ${{ github.workspace }}/vv-utils.nvim
+        run: ./tests/run.sh
 
   lua-nightly:
     runs-on: ubuntu-24.04
@@ -63,6 +66,7 @@ jobs:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
           repository: beixiyo/vv-utils.nvim
+          ref: ${{ vars.VV_TEST_UTILS_REV || 'main' }}
           persist-credentials: false
           path: vv-utils.nvim
       - uses: rhysd/action-setup-vim@febef33995d6649302e9d88dda81e071b68f16a7
@@ -71,4 +75,6 @@ jobs:
           neovim: true
       - name: Run Lua tests against Neovim nightly
         working-directory: vv-mcp.nvim
-        run: sh tests/run.sh
+        env:
+          VV_UTILS: ${{ github.workspace }}/vv-utils.nvim
+        run: ./tests/run.sh
