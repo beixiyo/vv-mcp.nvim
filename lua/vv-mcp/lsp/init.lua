@@ -29,6 +29,7 @@ function M.request(params)
 
   local context, context_error = Context.create(params, operation)
   if not context then return { error = context_error } end
+  context.lsp_config = require('vv-mcp.config').get().lsp
 
   local handlers = {
     navigation = Navigation,

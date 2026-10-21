@@ -19,11 +19,11 @@ local function purge_expired()
   end
 end
 
-local function node_origin(client, uri)
-  return PathOrigin.classify(client, vim.uri_to_fname(uri))
+local function node_origin(client, uri, lsp_config)
+  return PathOrigin.classify(client, vim.uri_to_fname(uri), lsp_config)
 end
 
-local function store_node(client, item)
+local function store_node(client, item, lsp_config)
   local id = node_id(item.name or client.name)
   local expires_at = os.time() + ttl_seconds
   nodes[id] = {
@@ -33,7 +33,7 @@ local function store_node(client, item)
   }
   local output = vim.deepcopy(item)
   Normalize.result(output)
-  output.origin = node_origin(client, item.uri)
+  output.origin = node_origin(client, item.uri, lsp_config)
   output.callId = id
   output.expiresAt = expires_at
   return output
@@ -59,7 +59,7 @@ local function prepare(context, operation)
       )
       if error then errors[client.name] = tostring(error) end
       for _, item in ipairs(response and response.result or {}) do
-        local output = store_node(client, item)
+        local output = store_node(client, item, context.lsp_config)
         output.client = client.name
         items[#items + 1] = output
       end
@@ -100,7 +100,7 @@ local function calls(context, operation)
   for _, call in ipairs(response and response.result or {}) do
     local target = operation.name == 'incoming_calls' and call.from or call.to
     if target then
-      local output = store_node(client, target)
+      local output = store_node(client, target, context.lsp_config)
       if context.params.includeExternal ~= false or output.origin == 'workspace' then
         items[#items + 1] = {
           node = output,

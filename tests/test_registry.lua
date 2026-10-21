@@ -1,4 +1,4 @@
--- 真实场景在独立子进程中执行；收集阶段仅注册具名用例。
+-- 真实场景在独立子进程中执行；收集阶段仅注册具名用例
 local H = dofile(vim.env.VV_TEST_REPO .. '/tests/helpers.lua')
 local T, child = H.new_set({ setup = 'minimal_init.lua' })
 
@@ -125,6 +125,30 @@ T["注册表写回、重配置、刷新、禁用与当前命令配置"] = functi
     Registry.remove({ registry_dir = second_tmp }, instance.pid)
     require('vv-utils.fs').delete(tmp)
     require('vv-utils.fs').delete(second_tmp)
+  end)
+end
+
+T["退出移除注册表后，迟到的 refresh 事件不应写回"] = function()
+  child.lua_func(function()
+    local tmp = vim.fn.tempname()
+    require('vv-mcp').setup({
+      registry_dir = tmp,
+      server = { auto_install = false },
+    })
+
+    local Registry = require('vv-mcp.registry')
+    local path = Registry.path({ registry_dir = tmp }, vim.fn.getpid())
+    assert(vim.uv.fs_stat(path), '注册表文件应存在')
+
+    -- 真实退出时 LSP 在 VimLeavePre 中被停止，LspDetach 晚于 remove 到达
+    vim.api.nvim_exec_autocmds('VimLeavePre', { group = 'vv-mcp.lifecycle' })
+    assert(not vim.uv.fs_stat(path), 'VimLeavePre 应移除注册表')
+
+    vim.api.nvim_exec_autocmds('LspDetach', { group = 'vv-mcp.lifecycle' })
+    vim.wait(20)
+    assert(not vim.uv.fs_stat(path), '退出后的 LspDetach 不应重建注册表，否则每次退出都残留文件')
+
+    require('vv-utils.fs').delete(tmp)
   end)
 end
 

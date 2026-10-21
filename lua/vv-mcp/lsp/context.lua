@@ -31,6 +31,7 @@ end
 ---@field clients vim.lsp.Client[] 当前作用域内可用的客户端
 ---@field pending_clients string[] 超时后仍未完成初始化、本次拿不到其修复项的客户端
 ---@field temporary boolean 是否由本次请求临时创建文档 buffer
+---@field lsp_config VVMcpLspConfig 当前 setup 已规格化的 LSP 配置，由入口注入
 
 local function sync_from_disk(bufnr, path)
   if vim.bo[bufnr].modified then

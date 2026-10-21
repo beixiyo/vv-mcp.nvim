@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+- 修复退出时注册表残留：`VimLeavePre` 移除注册表后，LSP 停止触发的 `LspDetach` 不再把它写回
+- 注册表写入跳过 `fsync`，rename 仍保证原子可见，省去 macOS 上每次数毫秒的 `F_FULLSYNC`
+- 输入类型统一为 `VVMcpOpts`，由 `VVMcpConfig` 派生
+- `setup` 不再返回配置，新增 `get_config()`；`registry_dir` 在合并后解析（用户值 > `VV_MCP_REGISTRY` > `stdpath('state')`）
+- `binary.path`、`binary.status`、`path_origin.classify` 改为显式传入 config，不再读取全局配置
+
 ## 0.3.4 - 2026-08-27
 
 - MCP 会话结束、服务等待失败或收到 SIGTERM / SIGINT 时回收受管 Neovim，避免遗留 LSP 子进程；信号退出码为 143

@@ -4,13 +4,13 @@ local PathOrigin = require('vv-mcp.lsp.path_origin')
 
 local M = {}
 
-local function filter_locations(value, client, include_external, path_pattern)
+local function filter_locations(value, client, include_external, path_pattern, lsp_config)
   if type(value) ~= 'table' then return value end
   local filtered = {}
   for _, location in ipairs(value) do
     local path = location.uri or location.targetUri
     local normalized = type(path) == 'string' and Normalize.wire_path(path) or ''
-    local external_matches = include_external or PathOrigin.classify(client, normalized) == 'workspace'
+    local external_matches = include_external or PathOrigin.classify(client, normalized, lsp_config) == 'workspace'
     local path_matches = not path_pattern or normalized:lower():find(path_pattern, 1, true)
     if external_matches and path_matches then filtered[#filtered + 1] = location end
   end
@@ -50,7 +50,8 @@ function M.request(context, operation)
           result,
           client,
           context.params.includeExternal ~= false,
-          type(context.params.pathPattern) == 'string' and context.params.pathPattern:lower() or nil
+          type(context.params.pathPattern) == 'string' and context.params.pathPattern:lower() or nil,
+          context.lsp_config
         )
       end
       results[#results + 1] = {

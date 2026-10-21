@@ -99,18 +99,16 @@ function M.target(uname)
   if system == 'Windows_NT' and x64 then return 'x86_64-pc-windows-msvc' end
 end
 
----@param config? VVMcpServerConfig
+---@param config VVMcpServerConfig
 ---@return string path
 function M.path(config)
-  config = config or require('vv-mcp.config').get().server
   if config.path and config.path ~= '' then return vim.fs.normalize(config.path) end
   return vim.fs.joinpath(config.install_dir or default_install_dir(), executable_name())
 end
 
----@param config? VVMcpServerConfig
+---@param config VVMcpServerConfig
 ---@return table status
 function M.status(config)
-  config = config or require('vv-mcp.config').get().server
   local path = M.path(config)
   local installed_version = Fs.exists(version_path(config))
       and vim.trim(Fs.read_all(version_path(config)) or '')

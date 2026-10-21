@@ -3,7 +3,7 @@ local M = {}
 local setup_generation = 0
 local cancel_auto_install
 
----@param opts? VVMcpConfig
+---@param opts? VVMcpOpts
 function M.setup(opts)
   setup_generation = setup_generation + 1
   local generation = setup_generation
@@ -42,10 +42,16 @@ function M.setup(opts)
   end
 end
 
+---获取当前配置（只读副本）；尚未 setup 时为默认配置
+---@return VVMcpConfig
+function M.get_config()
+  return vim.deepcopy(require('vv-mcp.config').get())
+end
+
 ---返回 MCP 客户端应使用的 vv-mcp 二进制稳定路径
 ---@return string path
 function M.server_path()
-  return require('vv-mcp.binary').path()
+  return require('vv-mcp.binary').path(require('vv-mcp.config').get().server)
 end
 
 return M

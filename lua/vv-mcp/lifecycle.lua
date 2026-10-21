@@ -17,8 +17,11 @@ function M.setup(config)
 
   local group = vim.api.nvim_create_augroup('vv-mcp.lifecycle', { clear = true })
 
+  local leaving = false
+
   local function refresh()
-    if current_generation ~= generation or not config.enabled then return end
+    -- 退出时 LSP 停止触发的 LspDetach 会排入 refresh，若在 remove 之后执行会把注册表写回来
+    if leaving or current_generation ~= generation or not config.enabled then return end
     Registry.write(config, Instance.current())
   end
 
@@ -33,6 +36,7 @@ function M.setup(config)
   vim.api.nvim_create_autocmd('VimLeavePre', {
     group = group,
     callback = function()
+      leaving = true
       if current_generation == generation then Registry.remove(config) end
     end,
     desc = 'vv-mcp: remove instance registry',

@@ -1,5 +1,4 @@
 ---统一判断 LSP 返回路径属于工作区、依赖还是外部位置
-local Config = require('vv-mcp.config')
 local Normalize = require('vv-mcp.lsp.normalize')
 
 local M = {}
@@ -13,10 +12,11 @@ end
 ---返回规范化路径的来源分类
 ---@param client vim.lsp.Client
 ---@param path string 原生路径或规范化传输路径
+---@param config VVMcpLspConfig 已规格化的 LSP 配置
 ---@return 'workspace'|'dependency'|'external' origin
-function M.classify(client, path)
+function M.classify(client, path, config)
   local wire_path = Normalize.wire_path(vim.fs.normalize(path))
-  for _, marker in ipairs(Config.get().lsp.dependency_markers) do
+  for _, marker in ipairs(config.dependency_markers) do
     if wire_path:find(Normalize.wire_path(marker), 1, true) then return 'dependency' end
   end
 
