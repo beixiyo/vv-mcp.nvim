@@ -63,9 +63,25 @@ The plugin must load during Neovim startup so the current instance can be regist
 
 The default `opts = {}` is sufficient for most projects
 
-Dependency markers classify paths when filtering references and sorting call hierarchy nodes. The defaults cover common Node.js, Rust, Go, Java, Python, Mason, and vendored dependency directories
+### Server path
 
-Override the complete marker list when a project uses custom dependency paths:
+Use `:VVMcpInfo` when `server.install_dir` or `server.path` is customized:
+
+```vim
+:VVMcpInfo
+```
+
+or:
+
+```vim
+:lua print(require('vv-mcp').server_path())
+```
+
+### Identifying third-party dependencies
+
+`lsp.dependency_markers` identifies third-party dependencies by path substrings. Reference queries can exclude these files, and call hierarchy results prioritize project source. Defaults cover dependency directories for common languages, package managers, Mason, and vendored code
+
+Override the list if the defaults do not cover your dependency directories:
 
 ```lua
 {
@@ -86,57 +102,12 @@ Override the complete marker list when a project uses custom dependency paths:
 
 Markers are normalized path substrings, not glob or Lua patterns
 
-Build and install the development binary at the default `~/.local/bin/vv-mcp` path:
-
-```bash
-./scripts/build-dev
-```
-
-The default server output is compact JSON with at most 200 results. The server is installed at `~/.local/bin/vv-mcp`. Configure the stdio command through arguments:
-
-```json
-{
-  "command": "vv-mcp",
-  "args": ["--output-format", "markdown", "--max-results", "100"]
-}
-```
-
-or environment variables:
-
-```text
-VV_MCP_OUTPUT_FORMAT=markdown
-VV_MCP_MAX_RESULTS=100
-```
-
-Managed headless instances stop after 5 idle minutes. When an interactive Neovim registers for the same project, the managed instance gracefully exits after a 15-second handoff. These positive-millisecond environment variables override the defaults: `VV_MCP_MANAGED_IDLE_TIMEOUT_MS`, `VV_MCP_MANAGED_HANDOFF_DELAY_MS`, `VV_MCP_MANAGED_WATCH_INTERVAL_MS`, and `VV_MCP_MANAGED_READY_TIMEOUT_MS`.
-
-For a CLI handoff check, add `--keep-alive-ms 30000` to an `lsp` command. It keeps the process manager alive after printing the result, so its managed instance can observe an interactive Neovim registration.
-
-Available formats:
-
-- `json` — compact machine-readable output
-- `markdown` — concise path-oriented output for direct model consumption
-
-Positions use 1-based `line:character-line:character` strings. Truncated responses report both the shown and filtered totals
-
 ## MCP client setup
 
 The default server path is:
 
 ```text
 ~/.local/bin/vv-mcp
-```
-
-Use `:VVMcpInfo` when `server.install_dir` or `server.path` is customized:
-
-```vim
-:VVMcpInfo
-```
-
-or:
-
-```vim
-:lua print(require('vv-mcp').server_path())
 ```
 
 **Codex**
@@ -197,6 +168,7 @@ The same binary is both the MCP server and a CLI. **With no subcommand it serves
 vv-mcp fix src/main.ts                # apply and save safe LSP fixes
 vv-mcp fix src --all                  # fix a whole directory, honoring ignore rules
 vv-mcp lsp --operation hover --uri src/main.ts --line 42 --character 17
+vv-mcp lsp --operation workspace_symbols --uri . --query create --output-format json
 vv-mcp editor --operation read_buffer --uri src/main.ts --start-line 1 --end-line 40
 ```
 
@@ -310,6 +282,50 @@ The read-only `editor` tool exposes state that may differ from files on disk:
 
 Use an explicit `instanceId` for current-state operations when several Neovim instances are running
 
+## Server options
+
+### Output format
+
+The default server output is compact JSON with at most 200 results. The server is installed at `~/.local/bin/vv-mcp`. Configure the stdio command through arguments:
+
+```json
+{
+  "command": "vv-mcp",
+  "args": ["--output-format", "markdown", "--max-results", "100"]
+}
+```
+
+or environment variables:
+
+```text
+VV_MCP_OUTPUT_FORMAT=markdown
+VV_MCP_MAX_RESULTS=100
+```
+
+Available formats:
+
+- `json` — compact machine-readable output
+- `markdown` — concise path-oriented output for direct model consumption
+
+Positions use 1-based `line:character-line:character` strings. Truncated responses report both the shown and filtered totals
+
+### Managed instance retention
+
+Starting with **0.4.0**, a registered managed headless Neovim with autonomous cleanup survives CLI exit and MCP disconnection, then exits after **5 idle minutes** by default. The CLI returns immediately without keeping the caller's pipes open. Later CLI or MCP requests sharing the registry can reuse it.
+
+```bash
+vv-mcp --managed-idle-timeout-ms 300000 lsp --operation workspace_symbols --uri . --query create
+```
+
+- Global `--managed-idle-timeout-ms` accepts positive milliseconds, overrides this caller's `VV_MCP_MANAGED_IDLE_TIMEOUT_MS`, and defaults to 300000 when neither is set
+- Each instance request renews its lease at entry and completion. Concurrent callers keep the **later expiry**; a shorter lease never shortens an existing one, and active requests prevent cleanup
+- Once directory preparation starts inside the instance, cancelling its original CLI does not destroy it. Other LSP requests retry while preparation is pending. The broker still cleans up failures before registration; unactivated instances have a startup timeout if their broker disappears
+- When an interactive Neovim registers for the same project, managed Neovim exits after a **15-second** handoff once no requests are active. Interactive instances are never idle-reaped
+- `VV_MCP_MANAGED_HANDOFF_DELAY_MS`, `VV_MCP_MANAGED_WATCH_INTERVAL_MS`, and `VV_MCP_MANAGED_READY_TIMEOUT_MS` override handoff, polling interval, and startup budget in positive milliseconds
+- Separate registries do not share instances. There is no cross-process startup lock yet, so simultaneous first requests can still create multiple instances
+
+`lsp --keep-alive-ms` remains a diagnostic option that **delays CLI exit**. It is not the managed instance's idle timeout and is unnecessary for autocomplete.
+
 ## Filtering large results
 
 Filters run before the result limit, so relevant items are not hidden by unrelated entries:
@@ -376,6 +392,12 @@ This allows nested workspaces to select the most specific Neovim process while k
 [MIT](./LICENSE)
 
 ## Development tests
+
+Build and install the development binary at the default `~/.local/bin/vv-mcp` path:
+
+```bash
+./scripts/build-dev
+```
 
 ```sh
 ./tests/run.sh [literal-filter]

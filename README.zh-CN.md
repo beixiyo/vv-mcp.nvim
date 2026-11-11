@@ -63,9 +63,25 @@ return {
 
 多数项目直接用默认 `opts = {}` 即可
 
-dependency_markers 的 marker 用于过滤引用与调用链排序，默认覆盖常见 Node.js、Rust、Go、Java、Python、Mason 与 vendored 目录
+### 服务端路径
 
-若项目使用了自定义依赖目录，可重写 marker：
+自定义 `server.install_dir` 或 `server.path` 时使用 `:VVMcpInfo` 查看实际路径：
+
+```vim
+:VVMcpInfo
+```
+
+或：
+
+```vim
+:lua print(require('vv-mcp').server_path())
+```
+
+### 第三方依赖识别
+
+`lsp.dependency_markers` 用路径片段识别第三方依赖：过滤引用时可排除这些文件，调用链排序时优先展示项目源码。默认覆盖常见语言、包管理器和 Mason 的依赖目录，以及 vendored 目录
+
+如果默认规则未覆盖项目的依赖目录，可覆盖这组路径片段：
 
 ```lua
 {
@@ -86,57 +102,12 @@ dependency_markers 的 marker 用于过滤引用与调用链排序，默认覆�
 
 marker 使用的是标准化路径片段，不是 glob 或 Lua pattern
 
-开发 vv-mcp 时，可构建并安装到默认的 `~/.local/bin/vv-mcp`：
-
-```bash
-./scripts/build-dev
-```
-
-服务端默认输出为紧凑 JSON（最多 200 条）。服务端默认安装在 `~/.local/bin/vv-mcp`，可通过参数配置 stdio：
-
-```json
-{
-  "command": "vv-mcp",
-  "args": ["--output-format", "markdown", "--max-results", "100"]
-}
-```
-
-或环境变量：
-
-```text
-VV_MCP_OUTPUT_FORMAT=markdown
-VV_MCP_MAX_RESULTS=100
-```
-
-受管 headless 实例默认空闲 5 分钟后退出。同项目的真实 Neovim 注册后，受管实例会在 15 秒交接期后优雅退出。以下正整数毫秒环境变量可覆盖默认值：`VV_MCP_MANAGED_IDLE_TIMEOUT_MS`、`VV_MCP_MANAGED_HANDOFF_DELAY_MS`、`VV_MCP_MANAGED_WATCH_INTERVAL_MS`、`VV_MCP_MANAGED_READY_TIMEOUT_MS`
-
-用 CLI 验证交接时，在 `lsp` 命令追加 `--keep-alive-ms 30000`。LSP 结果打印后进程管理器仍会保活，因此受管实例能观察到真实 Neovim 的注册
-
-可用格式：
-
-- `json`：紧凑机器可读输出
-- `markdown`：面向模型的精简路径导向输出
-
-位置使用 1-based 的 `line:character-line:character` 字符串，截断返回会同时给出展示数量和过滤数量
-
 ## MCP 客户端设置
 
 服务端路径为：
 
 ```text
 ~/.local/bin/vv-mcp
-```
-
-自定义 `server.install_dir` 或 `server.path` 时使用 `:VVMcpInfo` 查看实际路径：
-
-```vim
-:VVMcpInfo
-```
-
-或：
-
-```vim
-:lua print(require('vv-mcp').server_path())
 ```
 
 **Codex**
@@ -197,6 +168,7 @@ claude mcp add --scope user lsp-mcp -- vv-mcp
 vv-mcp fix src/main.ts                # 应用并保存安全的 LSP 修复
 vv-mcp fix src --all                  # 遵守 ignore 规则，串行修复整个目录
 vv-mcp lsp --operation hover --uri src/main.ts --line 42 --character 17
+vv-mcp lsp --operation workspace_symbols --uri . --query create --output-format json
 vv-mcp editor --operation read_buffer --uri src/main.ts --start-line 1 --end-line 40
 ```
 
@@ -310,6 +282,48 @@ rename_resource_preview
 
 多实例共存时，当前状态相关操作请显式传 `instanceId`
 
+## 服务端参数
+
+### 输出格式
+
+服务端默认输出为紧凑 JSON（最多 200 条）。服务端默认安装在 `~/.local/bin/vv-mcp`，可通过参数配置 stdio：
+
+```json
+{
+  "command": "vv-mcp",
+  "args": ["--output-format", "markdown", "--max-results", "100"]
+}
+```
+
+或环境变量：
+
+```text
+VV_MCP_OUTPUT_FORMAT=markdown
+VV_MCP_MAX_RESULTS=100
+```
+
+可用格式：
+
+- `json`：紧凑机器可读输出
+- `markdown`：面向模型的精简路径导向输出
+
+位置使用 1-based 的 `line:character-line:character` 字符串，截断返回会同时给出展示数量和过滤数量
+
+### 受管实例保活
+
+```bash
+vv-mcp --managed-idle-timeout-ms 300000 lsp --operation workspace_symbols --uri . --query create
+```
+
+- `--managed-idle-timeout-ms` 是全局正整数毫秒参数，覆盖当前调用者的 `VV_MCP_MANAGED_IDLE_TIMEOUT_MS`，未指定时默认 300000
+- 每次实例请求在开始与结束时续期；多个调用者取**较晚的过期时间**，短租期不会缩短其他调用者的保活，请求执行中也不会回收
+- 目录预热一旦在实例中开始，不会因原 CLI 取消而销毁；其他 LSP 请求遇到预热状态会重试。首次注册前的启动失败仍由 broker 清理，失去 broker 的未激活实例有启动超时兜底
+- 同项目的真实 Neovim 注册后，受管实例在 **15 秒**交接期后、无活动请求时优雅退出；交互式实例不受空闲保活控制
+- `VV_MCP_MANAGED_HANDOFF_DELAY_MS`、`VV_MCP_MANAGED_WATCH_INTERVAL_MS`、`VV_MCP_MANAGED_READY_TIMEOUT_MS` 可覆盖交接、检查间隔与启动预算，均为正整数毫秒
+- 不同注册表互不复用；当前没有跨进程启动锁，同时首次请求仍可能创建多个受管实例
+
+`lsp --keep-alive-ms` 仍仅用于诊断：它让 **CLI 自身延迟退出**，不是受管实例的空闲保活时间，补全等调用不需要设置
+
 ## 大结果过滤
 
 过滤发生在结果限制前，避免无关内容掩盖有效条目：
@@ -377,12 +391,18 @@ Lua handlers → attached LSP clients / live buffers
 
 ## 开发测试
 
+开发 vv-mcp 时，可构建并安装到默认的 `~/.local/bin/vv-mcp`：
+
+```bash
+./scripts/build-dev
+```
+
 ```sh
 ./tests/run.sh [literal-filter]
 ```
 
-要求 Unix-like 系统、Neovim 0.12+、Git、POSIX shell，以及包含 `dev/test/` 的已有 vv-utils.nvim 源码。入口发现开发集合或已安装源码；`VV_UTILS` 可覆盖路径，`NVIM_BIN` 可指定 Neovim。不读取个人配置，不下载 vv 插件。
+要求 Unix-like 系统、Neovim 0.12+、Git、POSIX shell，以及包含 `dev/test/` 的已有 vv-utils.nvim 源码。入口发现开发集合或已安装源码；`VV_UTILS` 可覆盖路径，`NVIM_BIN` 可指定 Neovim。不读取个人配置，不下载 vv 插件
 
-Lua 测试使用本地下载/LSP 替身，不要求 Rust 工具链、parser 或真实 MCP 二进制。临时目录必须可写、可执行，以运行假下载器与 shell 进程。CI/release 使用同一入口，须先发布 utils 共享入口。可选仓库变量 VV_TEST_UTILS_REV 可指定已发布 commit/tag 固定 CI 版本；未设置时显式 utils checkout 跟随 main。
+Lua 测试使用本地下载/LSP 替身，不要求 Rust 工具链、parser 或真实 MCP 二进制。临时目录必须可写、可执行，以运行假下载器与 shell 进程。CI/release 使用同一入口，须先发布 utils 共享入口。可选仓库变量 VV_TEST_UTILS_REV 可指定已发布 commit/tag 固定 CI 版本；未设置时显式 utils checkout 跟随 main
 
-过滤为字面子串，无匹配非零退出。依赖发现、mini.test 准备与隔离契约见 [共享测试说明](https://github.com/beixiyo/vv-utils.nvim/blob/main/dev/test/README.zh-CN.md)。
+过滤为字面子串，无匹配非零退出。依赖发现、mini.test 准备与隔离契约见 [共享测试说明](https://github.com/beixiyo/vv-utils.nvim/blob/main/dev/test/README.zh-CN.md)

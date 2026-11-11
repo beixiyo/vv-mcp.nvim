@@ -1,12 +1,31 @@
 # Changelog
 
-## Unreleased
+## 0.4.0 - 2026-11-11
 
-- 修复退出时注册表残留：`VimLeavePre` 移除注册表后，LSP 停止触发的 `LspDetach` 不再把它写回
-- 注册表写入跳过 `fsync`，rename 仍保证原子可见，省去 macOS 上每次数毫秒的 `F_FULLSYNC`
+### 主要变化
+
+- **目录查询**：`workspace_symbols` 支持项目目录，无可用实例时自动启动 headless Neovim
+- **独立保活**：CLI 退出或 MCP 断开后，Neovim/LSP 继续运行，默认空闲 **5 分钟**后回收
+- **共享续期**：CLI/MCP 取较晚的过期时间，执行中的请求不会被回收
+- **保活配置**：`--managed-idle-timeout-ms` 或 `VV_MCP_MANAGED_IDLE_TIMEOUT_MS`
+
+### 修复与性能
+
+- 目录批量修复等待受管实例预热完成，重试期间固定原实例，避免把初始化状态计为文件失败
+- 受管实例交接校验交互式 Neovim 的实时路由根，避免切换项目后凭旧身份或过期注册记录误回收
+- 修复多语言冷启动遗漏客户端，以及从文档脚本启动后遗漏 TS/TSX 项目
+- 修复 Unix 下取消 CLI 误杀保活实例、子进程继承管道导致调用方等待
+- 统一 Unix 路径别名，避免软链接或 macOS `/var` 别名导致重复启动
+- 修复退出时注册记录被重新写回；注册表写入跳过 `fsync`，保留原子 rename
+
+### 配置与 API
+
+- `setup()` 不再返回配置，改用 `get_config()`
 - 输入类型统一为 `VVMcpOpts`，由 `VVMcpConfig` 派生
-- `setup` 不再返回配置，新增 `get_config()`；`registry_dir` 在合并后解析（用户值 > `VV_MCP_REGISTRY` > `stdpath('state')`）
-- `binary.path`、`binary.status`、`path_origin.classify` 改为显式传入 config，不再读取全局配置
+- 注册表目录优先级：用户配置 → `VV_MCP_REGISTRY` → `stdpath('state')`
+- `binary.path`、`binary.status`、`path_origin.classify` 改为显式接收 config
+
+> 仍未引入跨进程启动锁；并发首次调用可能创建多个受管实例
 
 ## 0.3.4 - 2026-08-27
 

@@ -4,6 +4,7 @@ use std::{
     collections::HashMap,
     fs,
     path::{Path, PathBuf},
+    process::Stdio,
     sync::{
         Arc,
         atomic::{AtomicU64, Ordering},
@@ -11,6 +12,7 @@ use std::{
     time::Duration,
 };
 
+use ignore::WalkBuilder;
 use tokio::{
     process::{Child, Command},
     sync::Mutex,
@@ -73,7 +75,6 @@ struct ManagedProcess {
     child: Child,
     pid: u32,
     socket: String,
-    last_used: Instant,
 }
 
 impl ManagedPool {
@@ -97,95 +98,65 @@ impl ManagedPool {
         }
     }
 
-    pub async fn touch(&self, instance: &Instance) {
-        if instance.kind != "managed" {
-            return;
-        }
-        let mut processes = self.processes.lock().await;
-        if let Some(process) = processes
-            .values_mut()
-            .find(|process| process.pid == instance.pid)
-        {
-            process.last_used = Instant::now();
-        }
+    pub fn set_idle_timeout(&mut self, timeout: Duration) {
+        self.idle_timeout = timeout;
+    }
+
+    pub fn idle_timeout_ms(&self) -> u64 {
+        self.idle_timeout.as_millis() as u64
     }
 
     pub async fn ensure(&self, uri: &str) -> Result<Instance, String> {
+        let deadline = Instant::now() + self.ready_timeout;
         let file = native_path(uri)?;
         let root = project_root(&file)?;
         let (pid, started) = {
             let mut processes = self.processes.lock().await;
             if let Some(process) = processes.get_mut(&root) {
                 if process.child.try_wait().ok().flatten().is_none() {
-                    process.last_used = Instant::now();
                     (process.pid, false)
                 } else {
                     processes.remove(&root);
-                    let process = spawn(&root, &file, self.registry.dir())?;
+                    let process = spawn(&root, &file, self)?;
                     let pid = process.pid;
                     processes.insert(root.clone(), process);
                     (pid, true)
                 }
             } else {
-                let process = spawn(&root, &file, self.registry.dir())?;
+                let process = spawn(&root, &file, self)?;
                 let pid = process.pid;
                 processes.insert(root.clone(), process);
                 (pid, true)
             }
         };
-        if started {
-            self.schedule_cleanup(root.clone(), pid);
-        }
-        match wait_for_instance(&self.registry, pid, self.ready_timeout).await {
-            Ok(instance) => Ok(instance),
+
+        match wait_for_instance(
+            &self.registry,
+            pid,
+            deadline.saturating_duration_since(Instant::now()),
+        )
+        .await
+        {
+            Ok(instance) => {
+                if started {
+                    // 注册成功后，自主管理模块已有启动超时兜底；取消 broker 不应反复杀掉冷启动
+                    let process = self.processes.lock().await.remove(&root);
+                    let retained =
+                        retain_instance(&instance, &file, self.idle_timeout_ms(), deadline).await;
+                    if let Err(error) = retained {
+                        if let Some(mut process) = process {
+                            stop(&mut process).await;
+                        }
+                        return Err(error);
+                    }
+                }
+                Ok(instance)
+            }
             Err(error) => {
                 self.remove_and_stop(&root, pid).await;
                 Err(error)
             }
         }
-    }
-
-    fn schedule_cleanup(&self, root: PathBuf, pid: u32) {
-        let processes = Arc::downgrade(&self.processes);
-        let registry = self.registry.clone();
-        let idle_timeout = self.idle_timeout;
-        let handoff_delay = self.handoff_delay;
-        let watch_interval = self.watch_interval;
-        tokio::spawn(async move {
-            let mut handoff_started = None;
-            loop {
-                tokio::time::sleep(watch_interval).await;
-                let interactive = registry.list().await.is_ok_and(|instances| {
-                    managed_project_id(&instances.instances, pid).is_some_and(|project_id| {
-                        has_interactive_instance(&instances.instances, project_id)
-                    })
-                });
-                if interactive {
-                    handoff_started.get_or_insert_with(Instant::now);
-                } else {
-                    handoff_started = None;
-                }
-
-                let Some(processes) = processes.upgrade() else {
-                    return;
-                };
-                let mut processes = processes.lock().await;
-                let Some(process) = processes.get_mut(&root) else {
-                    return;
-                };
-                if process.pid != pid {
-                    return;
-                }
-                let should_handoff =
-                    handoff_started.is_some_and(|started| started.elapsed() >= handoff_delay);
-                if !should_handoff && process.last_used.elapsed() < idle_timeout {
-                    continue;
-                }
-                stop(process).await;
-                processes.remove(&root);
-                return;
-            }
-        });
     }
 
     async fn remove_and_stop(&self, root: &Path, pid: u32) {
@@ -244,9 +215,9 @@ fn managed_duration(name: &str, default: Duration) -> Duration {
 
 fn native_path(uri: &str) -> Result<PathBuf, String> {
     let path = uri::native_path(uri)?;
-    if !path.is_file() {
+    if !path.is_file() && !path.is_dir() {
         return Err(format!(
-            "path does not exist or is not a regular file: {}",
+            "path does not exist or is not a regular file or directory: {}",
             path.display()
         ));
     }
@@ -254,9 +225,12 @@ fn native_path(uri: &str) -> Result<PathBuf, String> {
 }
 
 fn project_root(file: &Path) -> Result<PathBuf, String> {
-    let start = file
-        .parent()
-        .ok_or_else(|| format!("file has no parent: {}", file.display()))?;
+    let start = if file.is_dir() {
+        file
+    } else {
+        file.parent()
+            .ok_or_else(|| format!("file has no parent: {}", file.display()))?
+    };
     for directory in start.ancestors() {
         if directory.join(".git").exists() {
             return Ok(directory.to_path_buf());
@@ -273,22 +247,134 @@ fn project_root(file: &Path) -> Result<PathBuf, String> {
     Ok(start.to_path_buf())
 }
 
-fn spawn(root: &Path, file: &Path, registry: &Path) -> Result<ManagedProcess, String> {
+// 冷启动只取有限的、遵守 ignore 的候选文件；语言与启动配置由 Neovim 决定
+const MAX_WORKSPACE_BOOTSTRAP_FILES: usize = 4096;
+
+fn workspace_candidates(
+    directory: &Path,
+    deadline: Instant,
+    mut cancelled: impl FnMut() -> bool,
+) -> Result<Vec<String>, String> {
+    let mut check = || {
+        if cancelled() || Instant::now() >= deadline {
+            Err("Workspace discovery canceled or timed out".to_string())
+        } else {
+            Ok(())
+        }
+    };
+    check()?;
+
+    let mut files = Vec::new();
+    for entry in WalkBuilder::new(directory)
+        .sort_by_file_path(|a, b| a.cmp(b))
+        .build()
+    {
+        // 包括目录：文件数量上限无法约束大量空目录的遍历
+        check()?;
+        let entry = entry.map_err(|error| error.to_string())?;
+        if entry.file_type().is_some_and(|kind| kind.is_file()) {
+            files.push(entry.path().to_string_lossy().into_owned());
+            if files.len() >= MAX_WORKSPACE_BOOTSTRAP_FILES {
+                break;
+            }
+        }
+    }
+    Ok(files)
+}
+
+async fn retain_instance(
+    instance: &Instance,
+    target: &Path,
+    idle_timeout_ms: u64,
+    deadline: Instant,
+) -> Result<(), String> {
+    let preparing = target.is_dir();
+    let files = if preparing {
+        let directory = target.to_path_buf();
+        // 调用 future 被取消或超时时 sender 随作用域释放，worker 在下一项停止
+        let (_cancel, mut cancelled) = tokio::sync::oneshot::channel::<()>();
+        tokio::time::timeout_at(
+            deadline,
+            tokio::task::spawn_blocking(move || {
+                workspace_candidates(&directory, deadline, || {
+                    !matches!(
+                        cancelled.try_recv(),
+                        Err(tokio::sync::oneshot::error::TryRecvError::Empty)
+                    )
+                })
+            }),
+        )
+        .await
+        .map_err(|_| "Workspace discovery timed out".to_string())?
+        .map_err(|error| error.to_string())??
+    } else {
+        Vec::new()
+    };
+    let remaining = deadline.saturating_duration_since(Instant::now());
+    if remaining.is_zero() {
+        return Err("Managed Neovim startup timed out".into());
+    }
+    let mut client = NvimClient::connect(&instance.socket)
+        .await
+        .map_err(|error| error.to_string())?;
+    let _: bool = client
+        .exec_lua_with_timeout(
+            "return require('vv-mcp.managed').start(...)",
+            vec![
+                serde_json::json!(idle_timeout_ms),
+                serde_json::json!(preparing),
+                serde_json::json!(files),
+                serde_json::json!(remaining.as_millis() as u64),
+            ],
+            remaining,
+        )
+        .await
+        .map_err(|error| error.to_string())?;
+    Ok(())
+}
+
+fn spawn(root: &Path, file: &Path, pool: &ManagedPool) -> Result<ManagedProcess, String> {
     let socket = std::env::temp_dir().join(format!(
         "vv-mcp-{}-{}.sock",
         std::process::id(),
         NEXT_SOCKET_ID.fetch_add(1, Ordering::Relaxed),
     ));
+
     let _ = fs::remove_file(&socket);
-    let child = Command::new("nvim")
-        .arg("--headless")
-        .arg("--listen")
-        .arg(&socket)
-        .arg(file)
+    let mut command = Command::new("nvim");
+    command.arg("--headless").arg("--listen").arg(&socket);
+    // 目录仅作为路由和扫描范围，不把它交给 netrw 或其他目录浏览插件
+    if file.is_file() {
+        command.arg(file);
+    }
+
+    // 不继承短命 broker 的管道和进程组，避免等待 EOF 或取消时误杀保活实例
+    #[cfg(unix)]
+    command.process_group(0);
+    let child = command
         .current_dir(root)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
         .env("VV_MCP_MANAGED", "1")
-        .env("VV_MCP_REGISTRY", registry)
-        .kill_on_drop(true)
+        .env("VV_MCP_REGISTRY", pool.registry.dir())
+        .env(
+            "VV_MCP_MANAGED_IDLE_TIMEOUT_MS",
+            pool.idle_timeout.as_millis().to_string(),
+        )
+        .env(
+            "VV_MCP_MANAGED_HANDOFF_DELAY_MS",
+            pool.handoff_delay.as_millis().to_string(),
+        )
+        .env(
+            "VV_MCP_MANAGED_WATCH_INTERVAL_MS",
+            pool.watch_interval.as_millis().to_string(),
+        )
+        .env(
+            "VV_MCP_MANAGED_READY_TIMEOUT_MS",
+            pool.ready_timeout.as_millis().to_string(),
+        )
+        .kill_on_drop(false)
         .spawn()
         .map_err(|error| format!("failed to start managed Neovim: {error}"))?;
     let pid = child
@@ -298,14 +384,17 @@ fn spawn(root: &Path, file: &Path, registry: &Path) -> Result<ManagedProcess, St
         child,
         pid,
         socket: socket.to_string_lossy().into_owned(),
-        last_used: Instant::now(),
     })
 }
 
 async fn stop(process: &mut ManagedProcess) {
     if let Ok(mut client) = NvimClient::connect(&process.socket).await {
-        let _: Result<(), _> = client
-            .exec_lua("vim.cmd('silent! qa!')", Vec::<String>::new())
+        let _: Result<bool, _> = client
+            .exec_lua_with_timeout(
+                "vim.schedule(function() vim.cmd('silent! qa!') end); return true",
+                Vec::<String>::new(),
+                Duration::from_secs(1),
+            )
             .await;
     }
     if tokio::time::timeout(Duration::from_secs(2), process.child.wait())
@@ -315,19 +404,6 @@ async fn stop(process: &mut ManagedProcess) {
         let _ = process.child.kill().await;
     }
     let _ = fs::remove_file(&process.socket);
-}
-
-fn managed_project_id(instances: &[Instance], pid: u32) -> Option<&str> {
-    instances
-        .iter()
-        .find(|instance| instance.kind == "managed" && instance.pid == pid)
-        .map(|instance| instance.project_id.as_str())
-}
-
-fn has_interactive_instance(instances: &[Instance], project_id: &str) -> bool {
-    instances
-        .iter()
-        .any(|instance| instance.kind == "interactive" && instance.project_id == project_id)
 }
 
 async fn wait_for_instance(
@@ -360,6 +436,48 @@ mod tests {
     use super::*;
 
     #[test]
+    fn directory_targets_resolve_their_own_project_and_ignore_dependency_files() {
+        let root =
+            std::env::temp_dir().join(format!("vv-mcp-directory-test-{}", std::process::id()));
+        fs::create_dir_all(root.join(".git")).unwrap();
+        fs::create_dir_all(root.join("src")).unwrap();
+        fs::create_dir_all(root.join("node_modules/dependency")).unwrap();
+        fs::write(root.join(".gitignore"), "node_modules/\n").unwrap();
+        fs::write(root.join("src/main.ts"), "export const value = 1\n").unwrap();
+        fs::write(root.join("node_modules/dependency/index.ts"), "ignored\n").unwrap();
+        let canonical = fs::canonicalize(&root).unwrap();
+        assert_eq!(native_path(root.to_str().unwrap()).unwrap(), canonical);
+        assert_eq!(project_root(&root).unwrap(), root);
+        assert_eq!(project_root(&root.join("src")).unwrap(), root);
+        assert_eq!(
+            workspace_candidates(&root, Instant::now() + Duration::from_secs(5), || false).unwrap(),
+            vec![root.join("src/main.ts").to_string_lossy().into_owned()]
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn workspace_discovery_honors_deadline_and_cancellation_for_empty_directories() {
+        let root = std::env::temp_dir().join(format!("vv-mcp-scan-cancel-{}", std::process::id()));
+        for index in 0..8 {
+            fs::create_dir_all(root.join(index.to_string())).unwrap();
+        }
+        let expired = workspace_candidates(&root, Instant::now(), || false);
+        let mut visited = 0;
+        let cancelled =
+            workspace_candidates(&root, Instant::now() + Duration::from_secs(5), || {
+                visited += 1;
+                visited > 2
+            });
+        fs::remove_dir_all(root).unwrap();
+        assert!(expired.is_err(), "过期预算不能继续发现文件");
+        assert!(
+            cancelled.is_err(),
+            "遍历空目录也必须响应取消，而不是返回空项目"
+        );
+    }
+
+    #[test]
     fn prefers_git_root_over_nested_package_manifest() {
         let root = std::env::temp_dir().join(format!("vv-mcp-root-test-{}", std::process::id()));
         let file = root.join("apps/web/src/main.ts");
@@ -390,31 +508,6 @@ mod tests {
         fs::remove_dir_all(root).unwrap();
     }
 
-    #[test]
-    fn detects_interactive_instance_for_managed_project_handoff() {
-        let mut interactive = fixture("interactive", "project", "interactive");
-        let managed = fixture("managed", "project", "managed");
-        assert!(has_interactive_instance(
-            &[managed.clone(), interactive.clone()],
-            "project"
-        ));
-        interactive.project_id = "other".into();
-        assert!(!has_interactive_instance(
-            &[managed, interactive],
-            "project"
-        ));
-    }
-
-    #[test]
-    fn finds_managed_project_by_pid() {
-        let managed = fixture("managed", "project", "managed");
-        let interactive = fixture("interactive", "project", "interactive");
-        assert_eq!(
-            managed_project_id(&[interactive, managed], 1),
-            Some("project")
-        );
-    }
-
     #[tokio::test]
     async fn stop_reaps_child_and_removes_socket() {
         let socket = std::env::temp_dir().join(format!(
@@ -423,6 +516,7 @@ mod tests {
             NEXT_SOCKET_ID.fetch_add(1, Ordering::Relaxed)
         ));
         let child = Command::new("nvim")
+            .args(["-u", "NONE", "-i", "NONE"])
             .arg("--headless")
             .arg("--listen")
             .arg(&socket)
@@ -434,7 +528,6 @@ mod tests {
             child,
             pid,
             socket: socket.to_string_lossy().into_owned(),
-            last_used: Instant::now(),
         };
         for _ in 0..100 {
             if socket.exists() {
@@ -475,19 +568,5 @@ mod tests {
         assert!(pool.processes.lock().await.is_empty());
 
         fs::remove_dir_all(fixture).unwrap();
-    }
-
-    fn fixture(id: &str, project_id: &str, kind: &str) -> Instance {
-        Instance {
-            instance_id: id.into(),
-            project_id: project_id.into(),
-            pid: 1,
-            socket: "/tmp/nvim.sock".into(),
-            cwd: "/tmp/project".into(),
-            roots: vec!["/tmp/project".into()],
-            lsp_clients: Vec::new(),
-            kind: kind.into(),
-            updated_at: 1,
-        }
     }
 }

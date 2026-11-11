@@ -1,5 +1,6 @@
 local Instance = require('vv-mcp.instance')
 local Registry = require('vv-mcp.registry')
+local Managed = require('vv-mcp.managed')
 
 local M = {}
 
@@ -26,6 +27,7 @@ function M.setup(config)
   end
 
   refresh()
+  Managed.setup(config)
 
   vim.api.nvim_create_autocmd(config.refresh_events, {
     group = group,
@@ -37,6 +39,7 @@ function M.setup(config)
     group = group,
     callback = function()
       leaving = true
+      Managed.stop()
       if current_generation == generation then Registry.remove(config) end
     end,
     desc = 'vv-mcp: remove instance registry',

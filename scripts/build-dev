@@ -11,10 +11,14 @@ if [[ -z "$version" ]]; then
 fi
 
 cd "$repo_dir"
-cargo build --locked
+cargo build --release --locked
 
 mkdir -p "$install_dir"
-install -m 755 target/debug/vv-mcp "$install_dir/vv-mcp"
+# 同目录临时文件 + rename，不截断可能仍在运行的旧二进制
+binary=$(mktemp "$install_dir/.vv-mcp.XXXXXX")
+trap 'rm -f "$binary"' EXIT
+install -m 755 target/release/vv-mcp "$binary"
+mv -f "$binary" "$install_dir/vv-mcp"
 printf '%s\n' "$version" > "$install_dir/vv-mcp.version"
 
 printf 'Installed dev vv-mcp %s at %s\n' "$version" "$install_dir/vv-mcp"

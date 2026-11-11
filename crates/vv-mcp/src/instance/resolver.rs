@@ -62,6 +62,9 @@ pub fn resolve_instance<'a>(
 
 fn normalize_wire_path(input: &str) -> String {
     let native = crate::uri::native_path(input).ok();
+    // Neovim 的 cwd 通常是物理路径；现有文件的路径别名也必须命中同一实例
+    #[cfg(unix)]
+    let native = native.map(|path| std::fs::canonicalize(&path).unwrap_or(path));
     let input = native
         .as_deref()
         .and_then(|path| path.to_str())
@@ -107,6 +110,28 @@ mod tests {
                 .instance_id,
             "child"
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn reuses_instance_when_target_uses_a_filesystem_alias() {
+        let root =
+            std::env::temp_dir().join(format!("vv-mcp-routing-alias-{}", std::process::id()));
+        let actual = root.join("actual");
+        let alias = root.join("alias");
+        std::fs::create_dir_all(actual.join("src")).unwrap();
+        std::fs::write(actual.join("src/main.lua"), "local value = true\n").unwrap();
+        std::os::unix::fs::symlink(&actual, &alias).unwrap();
+        let canonical = std::fs::canonicalize(&actual).unwrap();
+        let instances = vec![fixture("shared", canonical.to_str().unwrap())];
+        let target = alias.join("src/main.lua");
+        let result = resolve_instance(&instances, None, target.to_str());
+        assert_eq!(
+            result.unwrap().instance_id,
+            "shared",
+            "路径别名不能重复启动同一项目"
+        );
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

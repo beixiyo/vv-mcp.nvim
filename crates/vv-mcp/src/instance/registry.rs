@@ -38,7 +38,9 @@ impl Registry {
                 Err(error) if error.proves_instance_is_stale() => {
                     let _ = fs::remove_file(path);
                 }
-                Err(_) => {}
+                // 超时只能证明当前不可探测，不能证明实例不存在
+                // 保留路由候选，由实际请求报告忙碌/超时，避免重复启动与歧义
+                Err(_) => instances.push(instance),
             }
         }
 
@@ -139,6 +141,28 @@ mod tests {
         assert_eq!(instances[1].instance_id, "old:1");
 
         fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[tokio::test]
+    async fn keeps_registered_instance_when_rpc_probe_times_out() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let socket = listener.local_addr().unwrap().to_string();
+        let peer = tokio::spawn(async move {
+            let (_stream, _) = listener.accept().await.unwrap();
+            std::future::pending::<()>().await;
+        });
+        let dir = std::env::temp_dir().join(format!("vv-mcp-busy-registry-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let mut record: serde_json::Value = serde_json::from_str(&fixture("busy", 1)).unwrap();
+        record["socket"] = socket.into();
+        fs::write(dir.join("busy.json"), record.to_string()).unwrap();
+        let result = Registry::new(Some(dir.clone())).unwrap().list().await;
+        peer.abort();
+        fs::remove_dir_all(dir).unwrap();
+        let instances = result.unwrap().instances;
+
+        assert_eq!(instances.len(), 1, "探测超时不能把注册实例变成 NotFound");
+        assert_eq!(instances[0].instance_id, "busy");
     }
 
     fn fixture(instance_id: &str, updated_at: u64) -> String {

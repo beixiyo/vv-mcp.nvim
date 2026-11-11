@@ -47,6 +47,10 @@ struct Args {
     #[arg(long, value_parser = parse_timeout, global = true)]
     timeout_ms: Option<u32>,
 
+    /// Managed Neovim idle timeout in milliseconds; overrides VV_MCP_MANAGED_IDLE_TIMEOUT_MS (default 300000)
+    #[arg(long, value_parser = parse_duration, global = true)]
+    managed_idle_timeout_ms: Option<u64>,
+
     /// Maximum number of results per request
     #[arg(
         long,
@@ -85,8 +89,8 @@ enum Command {
         #[arg(long)]
         yes: bool,
 
-        /// Keep the managed Neovim lifecycle alive after the request; useful for diagnosing managed-instance handoff
-        #[arg(long, value_parser = parse_keep_alive)]
+        /// Delay CLI exit after printing results (diagnostics only); use --managed-idle-timeout-ms for managed Neovim retention
+        #[arg(long, value_parser = parse_duration)]
         keep_alive_ms: Option<u64>,
     },
 
@@ -110,12 +114,12 @@ fn parse_timeout(value: &str) -> Result<u32, String> {
     Ok(value)
 }
 
-fn parse_keep_alive(value: &str) -> Result<u64, String> {
+fn parse_duration(value: &str) -> Result<u64, String> {
     let value = value
         .parse::<u64>()
-        .map_err(|_| "keep-alive-ms must be a positive integer".to_owned())?;
+        .map_err(|_| "duration must be a positive integer".to_owned())?;
     if value == 0 {
-        return Err("keep-alive-ms must be greater than zero".to_owned());
+        return Err("duration must be greater than zero".to_owned());
     }
     Ok(value)
 }
@@ -143,13 +147,17 @@ fn parse_line(value: &str) -> Result<u32, String> {
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let args = Args::parse();
-    let server = VvMcpServer::new(
+    let mut server = VvMcpServer::new(
         args.registry,
         OutputConfig {
             format: resolve_format(args.output_format, args.command.is_some()),
             max_results: args.max_results,
         },
     )?;
+
+    if let Some(milliseconds) = args.managed_idle_timeout_ms {
+        server.set_managed_idle_timeout(std::time::Duration::from_millis(milliseconds));
+    }
 
     // --instance-id 与 --timeout-ms 是全局选项：三个子命令都要路由到实例、都要发 RPC，
     // 所以它们在每个子命令下都真实生效，而不是「用不上就忽略」
@@ -222,13 +230,13 @@ async fn main() -> anyhow::Result<()> {
     finish(result)
 }
 
-/// 进程收到终止信号；用 Error 携带，让调用方统一走「先回收托管 Neovim 再退出」
+/// 进程收到终止信号；先回收仍由 broker 持有的启动资源，已注册的共享实例自主回收
 #[derive(Debug, thiserror::Error)]
 #[error("terminated by signal")]
 struct Terminated;
 
 /// 等待 SIGTERM / SIGINT。MCP 客户端关闭和 hook 超时都可能直接发信号，
-/// 不接住的话进程立刻退出，托管 Neovim 及其 LSP 子进程全部成为孤儿
+/// 接住信号以清理尚未注册的启动进程；已保活的共享实例不随调用者退出
 async fn termination_signal() {
     #[cfg(unix)]
     {
@@ -262,7 +270,7 @@ async fn until_terminated<T>(task: impl Future<Output = anyhow::Result<T>>) -> a
     }
 }
 
-/// 信号终止属于预期退出：托管资源已回收，按惯例以 128+SIGTERM 静默退出，不打印错误
+/// 信号终止属于预期退出：启动资源已回收，保活实例继续运行，按惯例以 128+SIGTERM 退出
 fn finish(result: anyhow::Result<()>) -> anyhow::Result<()> {
     match result {
         Err(error) if error.is::<Terminated>() => std::process::exit(143),
@@ -742,6 +750,38 @@ mod tests {
                 "true",
             ])
             .is_err()
+        );
+    }
+
+    #[test]
+    fn parses_managed_idle_timeout() {
+        let args = Args::try_parse_from([
+            "vv-mcp",
+            "lsp",
+            "--operation",
+            "workspace_symbols",
+            "--uri",
+            "/work",
+            "--query",
+            "create",
+            "--managed-idle-timeout-ms",
+            "300000",
+        ])
+        .unwrap();
+        assert_eq!(
+            args.managed_idle_timeout_ms,
+            Some(300_000),
+            "保活参数应在子命令后生效"
+        );
+        assert!(
+            Args::try_parse_from(["vv-mcp", "--managed-idle-timeout-ms", "0"]).is_err(),
+            "保活时间必须为正数"
+        );
+        let args = Args::try_parse_from(["vv-mcp", "--managed-idle-timeout-ms", "120000"]).unwrap();
+        assert_eq!(
+            args.managed_idle_timeout_ms,
+            Some(120_000),
+            "保活参数应在 MCP 模式生效"
         );
     }
 

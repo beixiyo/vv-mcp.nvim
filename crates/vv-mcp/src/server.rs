@@ -20,9 +20,9 @@ use crate::{
     uri,
 };
 
-const LSP_REQUEST: &str = "return require('vv-mcp.lsp').request(...)";
-const EDITOR_REQUEST: &str = "return require('vv-mcp.editor').request(...)";
-const WORKSPACE_REQUEST: &str = "return require('vv-mcp.workspace').request(...)";
+const LSP_REQUEST: &str = "local params, idle = ...; return require('vv-mcp.managed').request('vv-mcp.lsp', params, idle)";
+const EDITOR_REQUEST: &str = "local params, idle = ...; return require('vv-mcp.managed').request('vv-mcp.editor', params, idle)";
+const WORKSPACE_REQUEST: &str = "local params, idle = ...; return require('vv-mcp.managed').request('vv-mcp.workspace', params, idle)";
 const DEFAULT_LSP_TIMEOUT_MS: u32 = 3000;
 const RPC_TIMEOUT_MARGIN_MS: u64 = 1000;
 const MANAGED_LSP_RETRY_DELAY: Duration = Duration::from_millis(100);
@@ -57,10 +57,7 @@ impl VvMcpServer {
     ) -> Result<Instance, String> {
         let instances = self.instances().await.map_err(|error| error.to_string())?;
         match resolve_instance(&instances.instances, instance_id, Some(uri)).cloned() {
-            Ok(instance) => {
-                self.managed.touch(&instance).await;
-                Ok(instance)
-            }
+            Ok(instance) => Ok(instance),
             Err(error)
                 if instance_id.is_none()
                     && error.to_string().starts_with("Neovim instance not found:") =>
@@ -79,7 +76,7 @@ impl VvMcpServer {
         timeout_ms: u32,
     ) -> Result<Value, String> {
         let params = fix_params(uri, Some(instance.instance_id.clone()), timeout_ms, None);
-        self.request_lsp(instance, &params)
+        self.request_ready_lsp(instance, &params)
             .await
             .map_err(|error| error.to_string())
     }
@@ -95,6 +92,14 @@ impl VvMcpServer {
 
     pub async fn instances(&self) -> Result<InstanceList> {
         self.registry.list().await
+    }
+
+    pub fn set_managed_idle_timeout(&mut self, timeout: Duration) {
+        self.managed.set_idle_timeout(timeout);
+    }
+
+    fn request_arguments(&self, params: Value) -> Vec<Value> {
+        vec![params, serde_json::json!(self.managed.idle_timeout_ms())]
     }
 
     pub async fn shutdown(&self) {
@@ -139,6 +144,7 @@ impl VvMcpServer {
 PATHS AND POSITIONS
 - Pass a native absolute path. Unix: /home/user/file.ts. Windows: C:/work/file.ts.
 - Plain paths are recommended; do not manually construct file:// URIs.
+- workspace_symbols accepts a project directory as uri, including cold starts without a running Neovim. Directory cold starts discover representative files using enabled Neovim LSP configurations.
 - Input and output positions are 1-based. Output range `45:17-45:32` can be reused as line=45, character=17.
 - Do not guess symbol positions. For a known file, call document_symbols first. For a project search, call workspace_symbols with query.
 
@@ -254,26 +260,10 @@ impl VvMcpServer {
 
     pub async fn run_lsp(&self, params: &LspParams) -> Result<Value, String> {
         let mut retried_stale_instance = false;
-        let mut managed_deadline = None;
 
         loop {
             let instance = self.select_instance(params).await?;
-            if instance.kind == "managed" && managed_deadline.is_none() {
-                managed_deadline = Some(tokio::time::Instant::now() + self.managed.ready_timeout());
-            }
-            match self.request_lsp(&instance, params).await {
-                Ok(result)
-                    if instance.kind == "managed" && managed_lsp_is_initializing(&result) =>
-                {
-                    let Some(deadline) = managed_deadline else {
-                        return Ok(result);
-                    };
-                    let now = tokio::time::Instant::now();
-                    if now >= deadline {
-                        return Ok(result);
-                    }
-                    tokio::time::sleep(MANAGED_LSP_RETRY_DELAY.min(deadline - now)).await;
-                }
+            match self.request_ready_lsp(&instance, params).await {
                 Ok(result) => return Ok(result),
                 Err(error) if !retried_stale_instance && error.proves_instance_is_stale() => {
                     retried_stale_instance = true;
@@ -283,15 +273,33 @@ impl VvMcpServer {
         }
     }
 
+    // 只重试尚未执行操作的初始化状态；固定 socket，不在等待期间重新路由写请求
+    // 普通查询和目录批量修复共用此入口，终态错误与连接错误交给各自调用方处理
+    async fn request_ready_lsp(
+        &self,
+        instance: &Instance,
+        params: &LspParams,
+    ) -> Result<Value, NvimError> {
+        let deadline = tokio::time::Instant::now() + self.managed.ready_timeout();
+        loop {
+            let result = self.request_lsp(instance, params).await?;
+            if instance.kind != "managed" || !managed_lsp_is_initializing(&result) {
+                return Ok(result);
+            }
+            let now = tokio::time::Instant::now();
+            if now >= deadline {
+                return Ok(result);
+            }
+            tokio::time::sleep(MANAGED_LSP_RETRY_DELAY.min(deadline - now)).await;
+        }
+    }
+
     async fn select_instance(&self, params: &LspParams) -> Result<Instance, String> {
         match self
             .resolve_active_instance(&params.uri, params.instance_id.as_deref())
             .await
         {
-            Ok(instance) => {
-                self.managed.touch(&instance).await;
-                Ok(instance)
-            }
+            Ok(instance) => Ok(instance),
             Err(error)
                 if params.instance_id.is_none()
                     && error.starts_with("Neovim instance not found:") =>
@@ -312,7 +320,7 @@ impl VvMcpServer {
         let params = serde_json::to_value(params)
             .map_err(|error| NvimError::MessagePack(error.to_string()))?;
         client
-            .exec_lua_with_timeout(LSP_REQUEST, vec![params], rpc_timeout)
+            .exec_lua_with_timeout(LSP_REQUEST, self.request_arguments(params), rpc_timeout)
             .await
     }
 
@@ -321,6 +329,7 @@ impl VvMcpServer {
             return self.run_read_buffer(params).await;
         }
         let mut last_error = None;
+
         for attempt in 0..2 {
             let instances = self.instances().await.map_err(|error| error.to_string())?;
             let instance = resolve_instance(
@@ -339,8 +348,13 @@ impl VvMcpServer {
                 Err(error) => return Err(error.to_string()),
             };
             let value = serde_json::to_value(params).map_err(|error| error.to_string())?;
+
             match client
-                .exec_lua_with_timeout(EDITOR_REQUEST, vec![value], rpc_timeout(params.timeout_ms))
+                .exec_lua_with_timeout(
+                    EDITOR_REQUEST,
+                    self.request_arguments(value),
+                    rpc_timeout(params.timeout_ms),
+                )
                 .await
             {
                 Ok(result) => return Ok(result),
@@ -361,6 +375,7 @@ impl VvMcpServer {
             params.uri.as_deref(),
         )
         .cloned();
+
         let instance = match instance {
             Ok(instance) => instance,
             Err(ResolveError::NotFound(_)) if params.instance_id.is_none() => {
@@ -374,8 +389,13 @@ impl VvMcpServer {
             Err(error) => return Err(error.to_string()),
         };
         let value = serde_json::to_value(params).map_err(|error| error.to_string())?;
+
         let result: Value = client
-            .exec_lua_with_timeout(EDITOR_REQUEST, vec![value], rpc_timeout(params.timeout_ms))
+            .exec_lua_with_timeout(
+                EDITOR_REQUEST,
+                self.request_arguments(value),
+                rpc_timeout(params.timeout_ms),
+            )
             .await
             .map_err(|error| error.to_string())?;
         if result["error"]["code"].as_str() == Some("buffer_not_loaded") {
@@ -394,12 +414,18 @@ impl VvMcpServer {
         )
         .cloned()
         .map_err(|error| error.to_string())?;
+
         let mut client = NvimClient::connect(&instance.socket)
             .await
             .map_err(|error| error.to_string())?;
         let value = serde_json::to_value(params).map_err(|error| error.to_string())?;
+
         client
-            .exec_lua_with_timeout(WORKSPACE_REQUEST, vec![value], Duration::from_secs(7))
+            .exec_lua_with_timeout(
+                WORKSPACE_REQUEST,
+                self.request_arguments(value),
+                Duration::from_secs(7),
+            )
             .await
             .map_err(|error| error.to_string())
     }
@@ -639,7 +665,7 @@ pub struct LspParams {
     /// LSP operation to execute; some apply operations write to disk and must follow the safe write flow
     #[arg(long, value_enum)]
     operation: LspOperation,
-    /// Native Unix or Windows absolute path; plain paths recommended, also accepts file URIs
+    /// Native Unix or Windows absolute path; workspace operations also accept a project directory, including managed cold starts; file URIs accepted
     #[arg(long)]
     uri: String,
     /// 1-based line number; required for position operations, prefer reusing range start from symbol queries
@@ -952,6 +978,83 @@ mod tests {
                 "{code} must be terminal"
             );
         }
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn batch_fix_waits_for_initialization_on_the_pinned_instance() {
+        let root = std::env::temp_dir().join(format!("vv-mcp-batch-ready-{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        let socket = root.join("nvim.sock");
+        // 只替换远端业务边界：真实 Neovim RPC 在第一次请求后延迟就绪
+        let script = r#"
+            package.preload['vv-mcp.managed'] = function()
+                local calls, ready = 0, false
+                return { request = function(_, params)
+                    calls = calls + 1
+                    if calls == 1 then vim.defer_fn(function() ready = true end, 150) end
+                    if not ready then return { error = { code = 'lsp_initializing' } } end
+                    return { changed = true, calls = calls, uri = params.uri }
+                end }
+            end
+        "#;
+        let mut child = tokio::process::Command::new("nvim")
+            .args(["--headless", "-u", "NONE", "-i", "NONE", "--listen"])
+            .arg(&socket)
+            .arg("--cmd")
+            .arg(format!("lua {script}"))
+            .current_dir(&root)
+            .env("HOME", &root)
+            .env("XDG_CONFIG_HOME", &root)
+            .env("XDG_DATA_HOME", &root)
+            .env("XDG_STATE_HOME", &root)
+            .env("XDG_CACHE_HOME", &root)
+            .kill_on_drop(true)
+            .spawn()
+            .unwrap();
+        let result = async {
+            let mut probe = None;
+            for _ in 0..100 {
+                if let Ok(value) = NvimClient::probe(socket.to_str().unwrap()).await {
+                    probe = Some(value);
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+            let probe = probe.expect("测试 Neovim 应接受 RPC");
+            let instance = Instance {
+                instance_id: "pinned".into(),
+                project_id: "fixture".into(),
+                pid: probe.pid,
+                socket: socket.to_string_lossy().into_owned(),
+                cwd: probe.cwd.clone(),
+                roots: vec![probe.cwd],
+                lsp_clients: vec![],
+                kind: "managed".into(),
+                updated_at: 0,
+            };
+            // 注册表刻意为空：批量修复必须始终使用固定实例，不得重新路由
+            let server =
+                VvMcpServer::new(Some(root.join("registry")), OutputConfig::default()).unwrap();
+            server
+                .fix_document_on_instance(
+                    &instance,
+                    root.join("main.lua").to_string_lossy().into_owned(),
+                    500,
+                )
+                .await
+        }
+        .await;
+        child.kill().await.unwrap();
+        child.wait().await.unwrap();
+        std::fs::remove_dir_all(&root).unwrap();
+        let result = result.unwrap();
+        assert_eq!(result["changed"], true, "预热状态不能被当作文件修复终态");
+        assert!(result["calls"].as_u64().unwrap() > 1, "应等待初始化后重试");
+        assert_eq!(
+            result["uri"],
+            root.join("main.lua").to_string_lossy().as_ref()
+        );
     }
 
     #[test]
