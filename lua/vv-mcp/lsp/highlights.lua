@@ -1,5 +1,6 @@
 ---查询当前文档内同一语义符号的读、写与文本高亮范围
 local Normalize = require('vv-mcp.lsp.normalize')
+local Request = require('vv-mcp.lsp.request')
 
 local M = {}
 
@@ -18,16 +19,11 @@ function M.request(context, operation)
   }
   for _, client in ipairs(context.clients) do
     if client:supports_method(operation.method, context.bufnr) then
-      local response, error = client:request_sync(
-        operation.method,
-        params,
-        context.timeout_ms,
-        context.bufnr
-      )
+      local raw, error = Request.sync(client, operation.method, params, context)
       results[#results + 1] = {
         client = client.name,
-        result = response and Normalize.result(response.result) or nil,
-        error = error and tostring(error) or nil,
+        result = Normalize.result(raw),
+        error = error,
       }
     end
   end

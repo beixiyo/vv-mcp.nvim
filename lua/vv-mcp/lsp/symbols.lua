@@ -1,5 +1,6 @@
 ---处理文档符号大纲与工作区符号搜索
 local Normalize = require('vv-mcp.lsp.normalize')
+local Request = require('vv-mcp.lsp.request')
 
 local M = {}
 
@@ -37,13 +38,8 @@ function M.request(context, operation)
       local request_params = operation.scope == 'workspace'
           and { query = context.params.query }
           or { textDocument = { uri = vim.uri_from_bufnr(context.bufnr) } }
-      local response, error = client:request_sync(
-        operation.method,
-        request_params,
-        context.timeout_ms,
-        context.bufnr
-      )
-      local result = response and Normalize.result(response.result) or nil
+      local raw, error = Request.sync(client, operation.method, request_params, context)
+      local result = Normalize.result(raw)
       if operation.name == 'document_symbols' then
         local query = type(context.params.query) == 'string'
             and context.params.query:lower()
@@ -59,7 +55,7 @@ function M.request(context, operation)
       results[#results + 1] = {
         client = client.name,
         result = result,
-        error = error and tostring(error) or nil,
+        error = error,
       }
     end
   end

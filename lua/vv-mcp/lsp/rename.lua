@@ -3,6 +3,7 @@
 ---预览时保存目标 buffer 与磁盘快照；应用前检查内容是否过期，应用或保存失败时
 ---回滚所有已变更目标，避免跨文件重命名只完成一部分
 local Normalize = require('vv-mcp.lsp.normalize')
+local Request = require('vv-mcp.lsp.request')
 local WorkspaceEdit = require('vv-utils.lsp.workspace_edit')
 
 local M = {}
@@ -39,16 +40,11 @@ local function prepare(context, operation)
   local results = {}
   for _, client in ipairs(context.clients) do
     if client:supports_method(operation.method, context.bufnr) then
-      local response, error = client:request_sync(
-        operation.method,
-        position_params(context),
-        context.timeout_ms,
-        context.bufnr
-      )
+      local raw, error = Request.sync(client, operation.method, position_params(context), context)
       results[#results + 1] = {
         client = client.name,
-        result = response and Normalize.result(response.result) or nil,
-        error = error and tostring(error) or nil,
+        result = Normalize.result(raw),
+        error = error,
       }
     end
   end
@@ -64,17 +60,13 @@ local function preview(context, operation)
     if client:supports_method(operation.method, context.bufnr) then
       local params = position_params(context)
       params.newName = context.params.newName
-      local response, error = client:request_sync(
-        operation.method,
-        params,
-        context.timeout_ms,
-        context.bufnr
-      )
-      if response and response.result then
+      local raw, error = Request.sync(client, operation.method, params, context)
+      if raw then
         local workspace, workspace_error = WorkspaceEdit.prepare({ {
-          edit = response.result,
+          edit = raw,
           encoding = client.offset_encoding or 'utf-16',
         } })
+
         if not workspace then return { error = rename_error(workspace_error) } end
         local rename_id = vim.fn.sha256(table.concat({
           tostring(vim.fn.getpid()), tostring(vim.uv.hrtime()), context.params.newName,
@@ -84,6 +76,7 @@ local function preview(context, operation)
           workspace = workspace,
           expires_at = expires_at,
         }
+
         return {
           operation = operation.name,
           renameId = rename_id,
@@ -95,8 +88,9 @@ local function preview(context, operation)
           changes = workspace.changes,
         }
       end
+
       if error then
-        return { error = { code = 'rename_failed', message = tostring(error), client = client.name } }
+        return { error = { code = 'rename_failed', message = error, client = client.name } }
       end
     end
   end

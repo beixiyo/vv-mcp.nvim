@@ -1,5 +1,6 @@
 ---处理无需符号位置的文档级能力：可跳转链接与内联提示
 local Normalize = require('vv-mcp.lsp.normalize')
+local Request = require('vv-mcp.lsp.request')
 
 local M = {}
 
@@ -37,16 +38,11 @@ function M.request(context, operation)
   local results = {}
   for _, client in ipairs(context.clients) do
     if client:supports_method(operation.method, context.bufnr) then
-      local response, error = client:request_sync(
-        operation.method,
-        request_params(context, operation, client),
-        context.timeout_ms,
-        context.bufnr
-      )
+      local raw, error = Request.sync(client, operation.method, request_params(context, operation, client), context)
       results[#results + 1] = {
         client = client.name,
-        result = response and Normalize.result(response.result) or nil,
-        error = error and tostring(error) or nil,
+        result = Normalize.result(raw),
+        error = error,
       }
     end
   end

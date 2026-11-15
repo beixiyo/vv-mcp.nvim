@@ -1,5 +1,6 @@
 ---管理调用层级节点，并查询一层调用者或被调用者
 local Normalize = require('vv-mcp.lsp.normalize')
+local Request = require('vv-mcp.lsp.request')
 local PathOrigin = require('vv-mcp.lsp.path_origin')
 
 local M = {}
@@ -54,11 +55,9 @@ local function prepare(context, operation)
   for _, client in ipairs(context.clients) do
     if client:supports_method(operation.method, context.bufnr) then
       supported = true
-      local response, error = client:request_sync(
-        operation.method, params, context.timeout_ms, context.bufnr
-      )
-      if error then errors[client.name] = tostring(error) end
-      for _, item in ipairs(response and response.result or {}) do
+      local raw, error = Request.sync(client, operation.method, params, context)
+      if error then errors[client.name] = error end
+      for _, item in ipairs(raw or {}) do
         local output = store_node(client, item, context.lsp_config)
         output.client = client.name
         items[#items + 1] = output
@@ -89,15 +88,13 @@ local function calls(context, operation)
     nodes[id] = nil
     return { error = { code = 'call_client_gone', message = 'The LSP client is no longer active' } }
   end
-  local response, error = client:request_sync(
-    operation.method, { item = node.item }, context.timeout_ms, context.bufnr
-  )
+  local raw, error = Request.sync(client, operation.method, { item = node.item }, context)
   if error then
-    return { error = { code = 'call_hierarchy_failed', message = tostring(error), client = client.name } }
+    return { error = { code = 'call_hierarchy_failed', message = error, client = client.name } }
   end
 
   local items = {}
-  for _, call in ipairs(response and response.result or {}) do
+  for _, call in ipairs(raw or {}) do
     local target = operation.name == 'incoming_calls' and call.from or call.to
     if target then
       local output = store_node(client, target, context.lsp_config)

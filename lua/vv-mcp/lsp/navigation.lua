@@ -1,5 +1,6 @@
 ---处理定义、声明、实现、引用等基于位置的导航请求
 local Normalize = require('vv-mcp.lsp.normalize')
+local Request = require('vv-mcp.lsp.request')
 local PathOrigin = require('vv-mcp.lsp.path_origin')
 
 local M = {}
@@ -38,13 +39,8 @@ function M.request(context, operation)
         }
       end
 
-      local response, error = client:request_sync(
-        operation.method,
-        request_params,
-        context.timeout_ms,
-        context.bufnr
-      )
-      local result = response and Normalize.result(response.result) or nil
+      local raw, error = Request.sync(client, operation.method, request_params, context)
+      local result = Normalize.result(raw)
       if operation.name == 'references' then
         result = filter_locations(
           result,
@@ -57,7 +53,7 @@ function M.request(context, operation)
       results[#results + 1] = {
         client = client.name,
         result = result,
-        error = error and tostring(error) or nil,
+        error = error,
       }
     end
   end

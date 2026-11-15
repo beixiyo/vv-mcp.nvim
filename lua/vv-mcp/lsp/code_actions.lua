@@ -1,5 +1,6 @@
 ---管理 Code Action 的查询、无副作用预览和单次安全应用事务
 local Normalize = require('vv-mcp.lsp.normalize')
+local Request = require('vv-mcp.lsp.request')
 local Fix = require('vv-utils.lsp.fix')
 local WorkspaceEdit = require('vv-utils.lsp.workspace_edit')
 
@@ -71,13 +72,11 @@ local function resolve_action(transaction, context)
   end
 
   if not action.edit and action.data and client:supports_method('codeAction/resolve', context.bufnr) then
-    local response, error = client:request_sync(
-      'codeAction/resolve', action, context.timeout_ms, context.bufnr
-    )
+    local raw, error = Request.sync(client, 'codeAction/resolve', action, context)
     if error then
-      return nil, { code = 'code_action_resolve_failed', message = tostring(error) }
+      return nil, { code = 'code_action_resolve_failed', message = error }
     end
-    action = response and response.result or action
+    action = raw or action
   end
 
   if action.command then
@@ -101,15 +100,13 @@ local function list_actions(context, operation)
 
   for _, client in ipairs(context.clients) do
     if client:supports_method(operation.method, context.bufnr) then
-      local response, error = client:request_sync(
-        operation.method, params, context.timeout_ms, context.bufnr
-      )
+      local raw, error = Request.sync(client, operation.method, params, context)
 
       if error then
-        errors[client.name] = tostring(error)
+        errors[client.name] = error
       end
 
-      for _, action in ipairs(response and response.result or {}) do
+      for _, action in ipairs(raw or {}) do
         local temporary = { action = action, client_id = client.id }
         local resolved, resolve_error = resolve_action(temporary, context)
 

@@ -66,4 +66,39 @@ T["重命名预览不写盘且应用一次性事务完整读回"] = function()
   end)
 end
 
+T["服务端返回错误响应时原样上报而不是当成空结果"] = function()
+  child.lua_func(function()
+    local Rename = require('vv-mcp.lsp.rename')
+    local Navigation = require('vv-mcp.lsp.navigation')
+    local bufnr = vim.api.nvim_create_buf(true, false)
+
+    local client = {
+      id = 903,
+      name = 'fixture-lsp',
+      offset_encoding = 'utf-16',
+      supports_method = function() return true end,
+      -- request_sync 对服务端 ResponseError 只返回一个值，错误在 response.err 里
+      request_sync = function()
+        return { err = { code = -32603, message = 'element cannot be renamed' } }
+      end,
+    }
+    local context = {
+      params = { line = 1, character = 1, newName = 'next' },
+      path = vim.fn.tempname(),
+      bufnr = bufnr,
+      timeout_ms = 1000,
+      clients = { client },
+    }
+
+    local preview = Rename.request(context, { name = 'rename_preview', method = 'textDocument/rename' })
+    assert(preview.error and preview.error.code == 'rename_failed', vim.inspect(preview))
+    assert(preview.error.message:find('element cannot be renamed', 1, true), preview.error.message)
+    assert(preview.error.message:find('-32603', 1, true), preview.error.message)
+
+    local hover = Navigation.request(context, { name = 'hover', method = 'textDocument/hover' })
+    assert(hover.results[1].result == nil)
+    assert(hover.results[1].error:find('element cannot be renamed', 1, true), vim.inspect(hover))
+  end)
+end
+
 return T
